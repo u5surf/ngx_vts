@@ -1,5 +1,6 @@
 use ngx::ffi::*;
 use ngx::{core, http, log, Status};
+use ngx::core::Status;
 use std::os::raw::{c_char, c_int, c_void};
 use std::time::Instant;
 
@@ -10,6 +11,7 @@ mod config;
 use stats::{VtsStats, VtsStatsManager};
 use handlers::VtsHandler;
 use config::VtsConfig;
+use ngx::http::{HttpModuleLocationConf, NgxHttpCoreModule, HttpModuleMainConf};
 
 // Module definition
 ngx::http_module! {
@@ -55,35 +57,29 @@ extern "C" fn vts_set_status(
     _cmd: *mut ngx_command_t,
     conf: *mut c_void,
 ) -> *mut c_char {
+    let cf = unsafe { &mut *cf };
     let loc_conf = conf as *mut VtsConfig;
     unsafe {
         (*loc_conf).enable_status = true;
-        
-        // Set up the handler for this location
-        let clcf = ngx_http_conf_get_module_loc_conf(cf, &ngx_http_core_module as *const _ as *mut _) as *mut ngx_http_core_loc_conf_t;
-        if !clcf.is_null() {
-            (*clcf).handler = Some(VtsHandler::vts_status_handler);
-        }
     }
-    std::ptr::null_mut()
+    let clcf = http::NgxHttpCoreModule::location_conf_mut(cf).expect("core location conf");
+    clcf.handler = Some(VtsHandler::vts_status_handler);
+    ngx::core::NGX_CONF_OK
 }
 
 // Post-configuration hook to set up request tracking
-extern "C" fn vts_postconfiguration(cf: *mut ngx_conf_t) -> ngx_int_t {
-    unsafe {
-        let cmcf = ngx_http_conf_get_module_main_conf(cf, &ngx_http_core_module as *const _ as *mut _) as *mut ngx_http_core_main_conf_t;
-        if cmcf.is_null() {
-            return NGX_ERROR as ngx_int_t;
-        }
+unsafe extern "C" fn vts_postconfiguration(cf: *mut ngx_conf_t) -> ngx_int_t {
+    let cf = &mut *cf;
+    let cmcf = NgxHttpCoreModule::main_conf_mut(cf).expect("http core main conf");
 
-        // Register log phase handler for request tracking
-        let h = ngx_array_push(&mut (*cmcf).phases[NGX_HTTP_LOG_PHASE as usize].handlers) as *mut ngx_http_handler_pt;
-        if h.is_null() {
-            return NGX_ERROR as ngx_int_t;
-        }
-        *h = Some(vts_log_handler);
+    let h = ngx_array_push(
+        &mut cmcf.phases[ngx_http_phases_NGX_HTTP_LOG_PHASE as usize].handlers,
+    ) as *mut ngx_http_handler_pt;    
+    if h.is_null() {
+        return core::Status::NGX_ERROR.into();
     }
-    NGX_OK as ngx_int_t
+    *h = Some(vts_log_handler);
+    core::Status::NGX_OK.into()
 }
 
 // Log phase handler for collecting request statistics
@@ -109,7 +105,7 @@ extern "C" fn vts_log_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
             // Get request statistics
             let status = (*r).headers_out.status;
             let bytes_in = (*r).request_length as u64;
-            let bytes_out = (*r).connection.sent as u64;
+            let bytes_out = (*(*r).connection).sent as u64;
             
             // Calculate request time (approximate)
             let request_time = if (*r).start_sec > 0 {
@@ -138,9 +134,9 @@ extern "C" fn vts_set_status_zone(
         let args = (*(*cf).args).elts as *mut ngx_str_t;
         let value = *args.offset(1);
         
-        if ngx::str::str_eq(&value, b"on") {
+        if str::str_eq(&value, b"on") {
             (*config).enable_zone = true;
-        } else if ngx::str::str_eq(&value, b"off") {
+        } else if str::str_eq(&value, b"off") {
             (*config).enable_zone = false;
         }
     }

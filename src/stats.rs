@@ -1,8 +1,9 @@
 use ngx::ffi::*;
-use ngx::{core, http};
+use ngx::{core, http, ngx_string};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::os::raw::c_void;
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]

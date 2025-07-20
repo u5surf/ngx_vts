@@ -4,6 +4,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use crate::stats::{VtsStats, VtsStatsManager};
 use crate::config::VtsConfig;
+use ngx::ngx_string;
 
 pub struct VtsHandler;
 
