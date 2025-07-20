@@ -5,21 +5,10 @@
 //! with Prometheus metrics output.
 
 use ngx::ffi::*;
-use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
-use config::VtsConfig;
-
-/// Module struct implementing HttpModule trait for nginx integration
-struct Module;
-
-impl http::HttpModule for Module {
-    fn module() -> &'static ngx_module_t {
-        unsafe { &*std::ptr::addr_of!(ngx_http_vts_module) }
-    }
-}
 
 /// VTS status request handler that generates traffic status response
 ///
@@ -214,12 +203,21 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
 static NGX_HTTP_VTS_MODULE_NAME: &[u8] = b"ngx_http_vts_module\0";
 
 /// Required exports for nginx module loading
+///
+/// # Safety
+///
+/// These mutable statics are only accessed by nginx during module initialization
 #[no_mangle]
 pub static mut ngx_modules: [*mut ngx_module_t; 2] = [
     unsafe { std::ptr::addr_of!(ngx_http_vts_module).cast_mut() },
     std::ptr::null_mut(),
 ];
 
+/// Module names array for nginx registration
+///
+/// # Safety
+///
+/// This mutable static is only accessed by nginx during module initialization
 #[no_mangle]
 pub static mut ngx_module_names: [*const c_char; 2] =
     [NGX_HTTP_VTS_MODULE_NAME.as_ptr().cast(), std::ptr::null()];
