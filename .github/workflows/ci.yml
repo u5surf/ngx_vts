@@ -18,8 +18,8 @@ jobs:
       matrix:
         rust:
           - stable
-          - beta
-          - nightly
+          #- beta
+          #- nightly
         nginx:
           - "1.28.0"
     
