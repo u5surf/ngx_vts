@@ -2,6 +2,8 @@
 
 A Rust implementation of nginx-module-vts for virtual host traffic status monitoring, built using the ngx-rust framework.
 
+**This module is EXPERIMENTAL.**
+
 ## Features
 
 - **Real-time Traffic Monitoring**: Comprehensive statistics collection for Nginx virtual hosts
