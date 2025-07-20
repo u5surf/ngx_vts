@@ -111,7 +111,7 @@ fn get_current_time() -> String {
     #[cfg(not(test))]
     {
         let current_time = ngx_time();
-        format!("{}", current_time)
+        format!("{current_time}")
     }
 
     #[cfg(test)]
@@ -130,7 +130,8 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     _cmd: *mut ngx_command_t,
     _conf: *mut c_void,
 ) -> *mut c_char {
-    let clcf = http::NgxHttpCoreModule::location_conf_mut(&mut *cf).expect("core location conf");
+    let cf = unsafe { &mut *cf };
+    let clcf = http::NgxHttpCoreModule::location_conf_mut(cf).expect("core location conf");
     clcf.handler = Some(vts_status_handler);
     std::ptr::null_mut()
 }
@@ -163,8 +164,8 @@ static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
 /// Main nginx module definition
 #[no_mangle]
 pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
-    ctx_index: ngx_uint_t::max_value(),
-    index: ngx_uint_t::max_value(),
+    ctx_index: ngx_uint_t::MAX,
+    index: ngx_uint_t::MAX,
     name: std::ptr::null_mut(),
     spare0: 0,
     spare1: 0,
@@ -226,7 +227,6 @@ mod tests {
     fn test_get_hostname() {
         let hostname = get_hostname();
         assert!(!hostname.is_empty());
-        assert!(hostname.len() > 0);
         assert_eq!(hostname, "test-hostname");
     }
 
