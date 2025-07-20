@@ -27,7 +27,7 @@ impl http::HttpModule for Module {
 /// comprehensive traffic statistics in a human-readable format.
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content
-    let content = generate_vts_status_content();
+    let _content = generate_vts_status_content();
 
     // Set response headers
     request.set_status(http::HTTPStatus::OK);
@@ -36,6 +36,7 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // The ngx-rust framework handles the response automatically
     // We just need to return the content through the log or print mechanism
 
+    // TODO: Actually return the content in the response body
     // For now, return a simple success to confirm the module works
     core::Status::NGX_OK
 });
@@ -93,8 +94,6 @@ fn generate_vts_status_content() -> String {
 fn get_hostname() -> String {
     #[cfg(not(test))]
     {
-        use std::ffi::CString;
-
         unsafe {
             let mut buf = [0u8; 256];
             if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {

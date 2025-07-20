@@ -1,3 +1,9 @@
+//! HTTP request handlers for VTS module
+//! 
+//! This module is currently unused but prepared for future implementation
+
+#![allow(dead_code, unused_imports)]
+
 use ngx::ffi::*;
 use ngx::{core, http, log, Status};
 use std::os::raw::{c_char, c_int, c_void};

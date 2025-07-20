@@ -1,3 +1,9 @@
+//! Statistics collection and management for VTS module
+//! 
+//! This module is currently unused but prepared for future implementation
+
+#![allow(dead_code, unused_imports)]
+
 use ngx::ffi::*;
 use ngx::{core, http, ngx_string};
 use std::collections::HashMap;

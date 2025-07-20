@@ -1,13 +1,18 @@
-use ngx::ffi::*;
-use std::os::raw::c_void;
+//! Configuration structures for the VTS module
 
+/// VTS module configuration structure
+///
+/// Contains settings for enabling status endpoint and zone tracking
 #[repr(C)]
 pub struct VtsConfig {
+    /// Enable the VTS status endpoint
     pub enable_status: bool,
+    /// Enable zone-based traffic tracking
     pub enable_zone: bool,
 }
 
 impl VtsConfig {
+    /// Create a new VTS configuration with default settings
     pub fn new() -> Self {
         VtsConfig {
             enable_status: false,

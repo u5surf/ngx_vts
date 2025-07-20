@@ -152,7 +152,10 @@ jobs:
         echo "NGX_VERSION=1.24.0" >> $GITHUB_ENV
     
     - name: Check build with MSRV
-      run: cargo build --verbose
+      run: |
+        export NGX_PATH=$(pwd)/nginx-1.24.0
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-1.24.0
+        cargo build --verbose
 
   docs:
     name: Documentation
