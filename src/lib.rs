@@ -175,7 +175,7 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     ctx: std::ptr::addr_of!(NGX_HTTP_VTS_MODULE_CTX)
         .cast_mut()
         .cast(),
-    commands: std::ptr::addr_of!(NGX_HTTP_VTS_COMMANDS).cast_mut().cast(),
+    commands: unsafe { &NGX_HTTP_VTS_COMMANDS[0] as *const _ as *mut _ },
     type_: NGX_HTTP_MODULE as ngx_uint_t,
 
     init_master: None,
