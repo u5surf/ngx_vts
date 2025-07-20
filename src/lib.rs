@@ -5,15 +5,13 @@
 //! with Prometheus metrics output.
 
 use ngx::ffi::*;
+use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
 
-/// VTS status request handler that generates traffic status response
-///
-/// This handler processes requests to the VTS status endpoint and returns
-/// comprehensive traffic statistics in a human-readable format.
+// VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content
     let _content = generate_vts_status_content();
@@ -83,8 +81,8 @@ fn generate_vts_status_content() -> String {
 fn get_hostname() -> String {
     #[cfg(not(test))]
     {
+        let mut buf = [0u8; 256];
         unsafe {
-            let mut buf = [0u8; 256];
             if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
                 // Create a null-terminated string safely
                 let len = buf.iter().position(|&x| x == 0).unwrap_or(buf.len());
@@ -112,10 +110,8 @@ fn get_hostname() -> String {
 fn get_current_time() -> String {
     #[cfg(not(test))]
     {
-        unsafe {
-            let current_time = ngx_time();
-            format!("{}", current_time)
-        }
+        let current_time = ngx_time();
+        format!("{}", current_time)
     }
 
     #[cfg(test)]
@@ -140,7 +136,7 @@ unsafe extern "C" fn ngx_http_set_vts_status(
 }
 
 /// Module commands configuration
-static mut ngx_http_vts_commands: [ngx_command_t; 2] = [
+static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("vts_status"),
         type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
@@ -153,7 +149,7 @@ static mut ngx_http_vts_commands: [ngx_command_t; 2] = [
 ];
 
 /// Module context configuration
-static ngx_http_vts_module_ctx: ngx_http_module_t = ngx_http_module_t {
+static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
     postconfiguration: None,
     create_main_conf: None,
@@ -175,10 +171,10 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     version: nginx_version as ngx_uint_t,
     signature: NGX_RS_MODULE_SIGNATURE.as_ptr().cast(),
 
-    ctx: std::ptr::addr_of!(ngx_http_vts_module_ctx)
+    ctx: std::ptr::addr_of!(NGX_HTTP_VTS_MODULE_CTX)
         .cast_mut()
         .cast(),
-    commands: unsafe { ngx_http_vts_commands.as_ptr().cast_mut() },
+    commands: std::ptr::addr_of!(NGX_HTTP_VTS_COMMANDS).cast_mut().cast(),
     type_: NGX_HTTP_MODULE as ngx_uint_t,
 
     init_master: None,
@@ -209,7 +205,7 @@ static NGX_HTTP_VTS_MODULE_NAME: &[u8] = b"ngx_http_vts_module\0";
 /// These mutable statics are only accessed by nginx during module initialization
 #[no_mangle]
 pub static mut ngx_modules: [*mut ngx_module_t; 2] = [
-    unsafe { std::ptr::addr_of!(ngx_http_vts_module).cast_mut() },
+    std::ptr::null_mut(), // Will be set to &ngx_http_vts_module by nginx
     std::ptr::null_mut(),
 ];
 
