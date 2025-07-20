@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ngx = { git = "https://github.com/nginx/ngx-rust" }
+libc = "0.2"
