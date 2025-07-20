@@ -20,7 +20,7 @@ A Rust implementation of nginx-module-vts for virtual host traffic status monito
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.81 or later
 - Nginx source code or development headers
 - ngx-rust framework
 

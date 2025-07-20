@@ -2,6 +2,7 @@
 name = "ngx_vts_rust"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.81"
 authors = ["Your Name <your.email@example.com>"]
 description = "Rust implementation of nginx-module-vts for virtual host traffic status monitoring"
 license = "Apache-2.0"
