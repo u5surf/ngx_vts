@@ -135,7 +135,11 @@ fn get_current_time() -> String {
     }
 }
 
-// Configuration handler for vts_status directive
+/// Configuration handler for vts_status directive
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
 unsafe extern "C" fn ngx_http_set_vts_status(
     cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
@@ -146,7 +150,7 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     std::ptr::null_mut()
 }
 
-// Module commands
+/// Module commands configuration
 static mut ngx_http_vts_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("vts_status"),
@@ -159,7 +163,7 @@ static mut ngx_http_vts_commands: [ngx_command_t; 2] = [
     ngx_command_t::empty(),
 ];
 
-// Module context
+/// Module context configuration
 static ngx_http_vts_module_ctx: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
     postconfiguration: None,
@@ -171,7 +175,7 @@ static ngx_http_vts_module_ctx: ngx_http_module_t = ngx_http_module_t {
     merge_loc_conf: None,
 };
 
-// Module definition
+/// Main nginx module definition
 #[no_mangle]
 pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     ctx_index: ngx_uint_t::max_value(),
@@ -180,10 +184,12 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     spare0: 0,
     spare1: 0,
     version: nginx_version as ngx_uint_t,
-    signature: NGX_RS_MODULE_SIGNATURE.as_ptr() as *const c_char,
+    signature: NGX_RS_MODULE_SIGNATURE.as_ptr().cast(),
 
-    ctx: &ngx_http_vts_module_ctx as *const _ as *mut c_void,
-    commands: unsafe { ngx_http_vts_commands.as_ptr() as *mut ngx_command_t },
+    ctx: std::ptr::addr_of!(ngx_http_vts_module_ctx)
+        .cast_mut()
+        .cast(),
+    commands: unsafe { ngx_http_vts_commands.as_ptr().cast_mut() },
     type_: NGX_HTTP_MODULE as ngx_uint_t,
 
     init_master: None,
@@ -204,21 +210,19 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     spare_hook7: 0,
 };
 
-// Module name string
+/// Module name string for nginx registration
 static NGX_HTTP_VTS_MODULE_NAME: &[u8] = b"ngx_http_vts_module\0";
 
-// Required exports for nginx module loading
+/// Required exports for nginx module loading
 #[no_mangle]
 pub static mut ngx_modules: [*mut ngx_module_t; 2] = [
-    unsafe { &ngx_http_vts_module as *const _ as *mut ngx_module_t },
+    unsafe { std::ptr::addr_of!(ngx_http_vts_module).cast_mut() },
     std::ptr::null_mut(),
 ];
 
 #[no_mangle]
-pub static mut ngx_module_names: [*const c_char; 2] = [
-    NGX_HTTP_VTS_MODULE_NAME.as_ptr() as *const c_char,
-    std::ptr::null(),
-];
+pub static mut ngx_module_names: [*const c_char; 2] =
+    [NGX_HTTP_VTS_MODULE_NAME.as_ptr().cast(), std::ptr::null()];
 
 #[cfg(test)]
 mod tests {
@@ -251,7 +255,7 @@ mod tests {
     #[test]
     fn test_module_name() {
         let name = unsafe {
-            std::ffi::CStr::from_ptr(NGX_HTTP_VTS_MODULE_NAME.as_ptr() as *const i8)
+            std::ffi::CStr::from_ptr(NGX_HTTP_VTS_MODULE_NAME.as_ptr().cast())
                 .to_str()
                 .unwrap()
         };
