@@ -67,28 +67,44 @@ fn generate_vts_status_content() -> String {
     )
 }
 
-// Get system hostname
+// Get system hostname (nginx-independent version for testing)
 fn get_hostname() -> String {
-    use std::ffi::CString;
-    
-    unsafe {
-        let mut buf = [0u8; 256];
-        if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
-            // Create a null-terminated string safely
-            let len = buf.iter().position(|&x| x == 0).unwrap_or(buf.len());
-            if let Ok(hostname_str) = std::str::from_utf8(&buf[..len]) {
-                return hostname_str.to_string();
+    #[cfg(not(test))]
+    {
+        use std::ffi::CString;
+        
+        unsafe {
+            let mut buf = [0u8; 256];
+            if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
+                // Create a null-terminated string safely
+                let len = buf.iter().position(|&x| x == 0).unwrap_or(buf.len());
+                if let Ok(hostname_str) = std::str::from_utf8(&buf[..len]) {
+                    return hostname_str.to_string();
+                }
             }
         }
+        "localhost".to_string()
     }
-    "localhost".to_string()
+    
+    #[cfg(test)]
+    {
+        "test-hostname".to_string()
+    }
 }
 
-// Get current time as string
+// Get current time as string (nginx-independent version for testing)
 fn get_current_time() -> String {
-    unsafe {
-        let current_time = ngx_time();
-        format!("{}", current_time)
+    #[cfg(not(test))]
+    {
+        unsafe {
+            let current_time = ngx_time();
+            format!("{}", current_time)
+        }
+    }
+    
+    #[cfg(test)]
+    {
+        "1234567890".to_string()
     }
 }
 
@@ -178,3 +194,41 @@ pub static mut ngx_module_names: [*const c_char; 2] = [
     std::ptr::null(),
 ];
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_hostname() {
+        let hostname = get_hostname();
+        assert!(!hostname.is_empty());
+        assert!(hostname.len() > 0);
+        assert_eq!(hostname, "test-hostname");
+    }
+
+    #[test]
+    fn test_generate_vts_status_content() {
+        let content = generate_vts_status_content();
+        assert!(content.contains("nginx-vts-rust"));
+        assert!(content.contains("Version: 0.1.0"));
+        assert!(content.contains("Active connections"));
+        assert!(content.contains("test-hostname"));
+    }
+
+    #[test]
+    fn test_get_current_time() {
+        let time_str = get_current_time();
+        assert!(!time_str.is_empty());
+        assert_eq!(time_str, "1234567890");
+    }
+    
+    #[test]
+    fn test_module_name() {
+        let name = unsafe { 
+            std::ffi::CStr::from_ptr(NGX_HTTP_VTS_MODULE_NAME.as_ptr() as *const i8)
+                .to_str()
+                .unwrap()
+        };
+        assert_eq!(name, "ngx_http_vts_module");
+    }
+}

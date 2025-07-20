@@ -1,5 +1,7 @@
 # nginx-vts-rust
 
+[![CI](https://github.com/u5surf/ngx_vts/actions/workflows/ci.yml/badge.svg)](https://github.com/u5surf/ngx_vts/actions/workflows/ci.yml)
+
 A Rust implementation of nginx-module-vts for virtual host traffic status monitoring, built using the ngx-rust framework.
 
 **This module is EXPERIMENTAL.**
