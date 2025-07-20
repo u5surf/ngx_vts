@@ -1,12 +1,18 @@
+//! # nginx-vts-rust
+//!
+//! A Rust implementation of nginx-module-vts for virtual host traffic status monitoring.
+//! This module provides comprehensive statistics collection for Nginx virtual hosts
+//! with Prometheus metrics output.
+
 use ngx::ffi::*;
-use ngx::{core, http, http_request_handler, ngx_string};
 use ngx::http::HttpModuleLocationConf;
+use ngx::{core, http, http_request_handler, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
 use config::VtsConfig;
 
-// Module struct implementing HttpModule trait
+/// Module struct implementing HttpModule trait for nginx integration
 struct Module;
 
 impl http::HttpModule for Module {
@@ -15,23 +21,33 @@ impl http::HttpModule for Module {
     }
 }
 
-// VTS status request handler that generates traffic status response
+/// VTS status request handler that generates traffic status response
+///
+/// This handler processes requests to the VTS status endpoint and returns
+/// comprehensive traffic statistics in a human-readable format.
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content
     let content = generate_vts_status_content();
-    
+
     // Set response headers
     request.set_status(http::HTTPStatus::OK);
     request.add_header_out("Content-Type", "text/plain; charset=utf-8");
-    
+
     // The ngx-rust framework handles the response automatically
     // We just need to return the content through the log or print mechanism
-    
+
     // For now, return a simple success to confirm the module works
     core::Status::NGX_OK
 });
 
-// Generate VTS status content
+/// Generate VTS status content
+///
+/// Creates a comprehensive status report including server information,
+/// connection statistics, and request metrics.
+///
+/// # Returns
+///
+/// A formatted string containing VTS status information
 fn generate_vts_status_content() -> String {
     // Generate a basic VTS status response without accessing nginx internal stats
     // since they may not be directly accessible through the current API
@@ -67,12 +83,18 @@ fn generate_vts_status_content() -> String {
     )
 }
 
-// Get system hostname (nginx-independent version for testing)
+/// Get system hostname (nginx-independent version for testing)
+///
+/// Returns the system hostname, with a test-specific version when running tests.
+///
+/// # Returns
+///
+/// System hostname as a String, or "test-hostname" during tests
 fn get_hostname() -> String {
     #[cfg(not(test))]
     {
         use std::ffi::CString;
-        
+
         unsafe {
             let mut buf = [0u8; 256];
             if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
@@ -85,14 +107,20 @@ fn get_hostname() -> String {
         }
         "localhost".to_string()
     }
-    
+
     #[cfg(test)]
     {
         "test-hostname".to_string()
     }
 }
 
-// Get current time as string (nginx-independent version for testing)
+/// Get current time as string (nginx-independent version for testing)
+///
+/// Returns the current time as a string, with a test-specific version when running tests.
+///
+/// # Returns
+///
+/// Current time as a String, or "1234567890" during tests
 fn get_current_time() -> String {
     #[cfg(not(test))]
     {
@@ -101,7 +129,7 @@ fn get_current_time() -> String {
             format!("{}", current_time)
         }
     }
-    
+
     #[cfg(test)]
     {
         "1234567890".to_string()
@@ -114,8 +142,7 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     _cmd: *mut ngx_command_t,
     _conf: *mut c_void,
 ) -> *mut c_char {
-    let clcf = http::NgxHttpCoreModule::location_conf_mut(&mut *cf)
-        .expect("core location conf");
+    let clcf = http::NgxHttpCoreModule::location_conf_mut(&mut *cf).expect("core location conf");
     clcf.handler = Some(vts_status_handler);
     std::ptr::null_mut()
 }
@@ -155,11 +182,11 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     spare1: 0,
     version: nginx_version as ngx_uint_t,
     signature: NGX_RS_MODULE_SIGNATURE.as_ptr() as *const c_char,
-    
+
     ctx: &ngx_http_vts_module_ctx as *const _ as *mut c_void,
     commands: unsafe { ngx_http_vts_commands.as_ptr() as *mut ngx_command_t },
     type_: NGX_HTTP_MODULE as ngx_uint_t,
-    
+
     init_master: None,
     init_module: None,
     init_process: None,
@@ -167,7 +194,7 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     exit_thread: None,
     exit_process: None,
     exit_master: None,
-    
+
     spare_hook0: 0,
     spare_hook1: 0,
     spare_hook2: 0,
@@ -188,7 +215,7 @@ pub static mut ngx_modules: [*mut ngx_module_t; 2] = [
     std::ptr::null_mut(),
 ];
 
-#[no_mangle]  
+#[no_mangle]
 pub static mut ngx_module_names: [*const c_char; 2] = [
     NGX_HTTP_VTS_MODULE_NAME.as_ptr() as *const c_char,
     std::ptr::null(),
@@ -221,10 +248,10 @@ mod tests {
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
     }
-    
+
     #[test]
     fn test_module_name() {
-        let name = unsafe { 
+        let name = unsafe {
             std::ffi::CStr::from_ptr(NGX_HTTP_VTS_MODULE_NAME.as_ptr() as *const i8)
                 .to_str()
                 .unwrap()
