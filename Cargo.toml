@@ -7,14 +7,7 @@ description = "Rust implementation of nginx-module-vts for virtual host traffic 
 license = "Apache-2.0"
 
 [lib]
-name = "ngx_vts_rust"
 crate-type = ["cdylib"]
 
 [dependencies]
 ngx = { git = "https://github.com/nginx/ngx-rust" }
-chrono = "0.4"
-parking_lot = "0.12"
-
-[features]
-default = []
-linux = []
