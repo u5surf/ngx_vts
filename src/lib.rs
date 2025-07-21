@@ -6,7 +6,7 @@
 
 use ngx::ffi::*;
 use ngx::http::HttpModuleLocationConf;
-use ngx::{core, http, http_request_handler, ngx_string};
+use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
@@ -150,6 +150,7 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 2] = [
 ];
 
 /// Module context configuration
+#[no_mangle]
 static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
     postconfiguration: None,
@@ -160,6 +161,8 @@ static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     create_loc_conf: None,
     merge_loc_conf: None,
 };
+
+ngx_modules!(ngx_http_vts_module);
 
 /// Main nginx module definition
 #[no_mangle]
@@ -172,9 +175,7 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     version: nginx_version as ngx_uint_t,
     signature: NGX_RS_MODULE_SIGNATURE.as_ptr().cast(),
 
-    ctx: std::ptr::addr_of!(NGX_HTTP_VTS_MODULE_CTX)
-        .cast_mut()
-        .cast(),
+    ctx: &NGX_HTTP_VTS_MODULE_CTX as *const _ as *mut _,
     commands: unsafe { &NGX_HTTP_VTS_COMMANDS[0] as *const _ as *mut _ },
     type_: NGX_HTTP_MODULE as ngx_uint_t,
 
@@ -195,29 +196,6 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     spare_hook6: 0,
     spare_hook7: 0,
 };
-
-/// Module name string for nginx registration
-static NGX_HTTP_VTS_MODULE_NAME: &[u8] = b"ngx_http_vts_module\0";
-
-/// Required exports for nginx module loading
-///
-/// # Safety
-///
-/// These mutable statics are only accessed by nginx during module initialization
-#[no_mangle]
-pub static mut ngx_modules: [*mut ngx_module_t; 2] = [
-    std::ptr::null_mut(), // Will be set to &ngx_http_vts_module by nginx
-    std::ptr::null_mut(),
-];
-
-/// Module names array for nginx registration
-///
-/// # Safety
-///
-/// This mutable static is only accessed by nginx during module initialization
-#[no_mangle]
-pub static mut ngx_module_names: [*const c_char; 2] =
-    [NGX_HTTP_VTS_MODULE_NAME.as_ptr().cast(), std::ptr::null()];
 
 #[cfg(test)]
 mod tests {
@@ -244,15 +222,5 @@ mod tests {
         let time_str = get_current_time();
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
-    }
-
-    #[test]
-    fn test_module_name() {
-        let name = unsafe {
-            std::ffi::CStr::from_ptr(NGX_HTTP_VTS_MODULE_NAME.as_ptr().cast())
-                .to_str()
-                .unwrap()
-        };
-        assert_eq!(name, "ngx_http_vts_module");
     }
 }
