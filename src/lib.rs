@@ -7,6 +7,7 @@
 use ngx::ffi::*;
 use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
+use ngx::core::Buffer;
 use std::os::raw::{c_char, c_void};
 
 mod config;
@@ -14,18 +15,29 @@ mod config;
 // VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content
-    let _content = generate_vts_status_content();
+    let content = generate_vts_status_content();
 
-    // Set response headers
+    let mut buf = match request.pool().create_buffer_from_str(&content) {
+        Some(buf) => buf,
+        None => return http::HTTPStatus::INTERNAL_SERVER_ERROR.into(),
+    };
+
+    request.set_content_length_n(buf.len());
     request.set_status(http::HTTPStatus::OK);
-    request.add_header_out("Content-Type", "text/plain; charset=utf-8");
 
-    // The ngx-rust framework handles the response automatically
-    // We just need to return the content through the log or print mechanism
+    buf.set_last_buf(request.is_main());
+    buf.set_last_in_chain(true);
 
-    // TODO: Actually return the content in the response body
-    // For now, return a simple success to confirm the module works
-    core::Status::NGX_OK
+    let rc = request.send_header();
+    if rc == core::Status::NGX_ERROR || rc > core::Status::NGX_OK || request.header_only() {
+        return rc;
+    }
+
+    let mut out = ngx_chain_t {
+        buf: buf.as_ngx_buf_mut(),
+        next: std::ptr::null_mut(),
+    };
+    request.output_filter(&mut out)
 });
 
 /// Generate VTS status content
