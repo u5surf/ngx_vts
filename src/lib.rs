@@ -4,10 +4,10 @@
 //! This module provides comprehensive statistics collection for Nginx virtual hosts
 //! with Prometheus metrics output.
 
+use ngx::core::Buffer;
 use ngx::ffi::*;
 use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
-use ngx::core::Buffer;
 use std::os::raw::{c_char, c_void};
 
 mod config;
