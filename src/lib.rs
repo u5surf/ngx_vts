@@ -11,10 +11,24 @@ use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
+mod vts_node;
+
+/// VTS main configuration structure (simplified for now)
+#[derive(Debug)]
+struct VtsMainConfig {
+    /// Enable VTS tracking
+    pub enabled: bool,
+}
+
+impl VtsMainConfig {
+    fn new() -> Self {
+        Self { enabled: true }
+    }
+}
 
 // VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
-    // Generate VTS status content
+    // Generate VTS status content (simplified version for now)
     let content = generate_vts_status_content();
 
     let mut buf = match request.pool().create_buffer_from_str(&content) {
@@ -148,8 +162,23 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     std::ptr::null_mut()
 }
 
+/// Configuration handler for vts_zone directive (simplified)
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
+unsafe extern "C" fn ngx_http_set_vts_zone(
+    _cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    _conf: *mut c_void,
+) -> *mut c_char {
+    // For now, just accept the directive without implementation
+    // Full shared memory implementation would be added here
+    std::ptr::null_mut()
+}
+
 /// Module commands configuration
-static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 2] = [
+static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 3] = [
     ngx_command_t {
         name: ngx_string!("vts_status"),
         type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
@@ -158,10 +187,18 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 2] = [
         offset: 0,
         post: std::ptr::null_mut(),
     },
+    ngx_command_t {
+        name: ngx_string!("vts_zone"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
+        set: Some(ngx_http_set_vts_zone),
+        conf: 0,
+        offset: 0,
+        post: std::ptr::null_mut(),
+    },
     ngx_command_t::empty(),
 ];
 
-/// Module context configuration
+/// Module context configuration (simplified)
 #[no_mangle]
 static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
