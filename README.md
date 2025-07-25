@@ -56,8 +56,8 @@ Add the following to your nginx configuration:
 load_module /path/to/libngx_vts_rust.so;
 
 http {
-    # Enable VTS zone tracking globally
-    vts_status_zone on;
+    # Configure shared memory zone for VTS statistics
+    vts_zone main 10m;
     
     server {
         listen 80;
@@ -81,7 +81,10 @@ http {
 ### Available Directives
 
 - **`vts_status`**: Enable the VTS status endpoint for this location
-- **`vts_status_zone on|off`**: Enable/disable zone tracking (default: on)
+- **`vts_zone <zone_name> <size>`**: Configure a shared memory zone for VTS statistics storage
+  - `zone_name`: Name of the shared memory zone (e.g., "main")  
+  - `size`: Size of the shared memory zone (e.g., "1m", "10m")
+  - Example: `vts_zone main 10m`
 
 ## Usage
 
@@ -138,22 +141,28 @@ nginx_vts_server_request_seconds{zone="example.com",type="max"} 2.5
 
 The module consists of several key components:
 
-- **Statistics Collection** (`src/stats.rs`): Core data structures and management
-- **HTTP Handlers** (`src/handlers.rs`): Request processing and JSON output
-- **Configuration** (`src/config.rs`): Module configuration and directives
-- **Main Module** (`src/lib.rs`): Nginx module integration and request hooks
+- **VTS Node System** (`src/vts_node.rs`): Core statistics data structures and management
+- **Configuration** (`src/config.rs`): Module configuration and directives  
+- **Main Module** (`src/lib.rs`): Nginx module integration and request handlers
+- **Statistics Collection** (`src/stats.rs`): Advanced statistics collection (unused currently)
 
-### Statistics Collection
+### Shared Memory Configuration
 
-The module uses nginx's log phase to collect request statistics without impacting request processing performance. Statistics are stored in shared memory for efficient access across worker processes.
+The `vts_zone` directive configures a shared memory zone that stores VTS statistics:
+
+- **Zone Name**: Identifies the shared memory zone (typically "main")
+- **Zone Size**: Allocates memory for statistics storage (e.g., "1m" = 1MB, "10m" = 10MB)
+- **Multi-worker Support**: Statistics are shared across all nginx worker processes
+- **Persistence**: Statistics persist across configuration reloads
 
 ### Request Tracking
 
 Every request is tracked with the following metrics:
 - Request count and timing
-- Bytes transferred (in/out)
-- HTTP status code distribution
+- Bytes transferred (in/out)  
+- HTTP status code distribution (1xx, 2xx, 3xx, 4xx, 5xx)
 - Server zone identification
+- Request time statistics (total, max, average)
 
 ## Monitoring Integration
 

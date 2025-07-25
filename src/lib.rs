@@ -162,18 +162,79 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     std::ptr::null_mut()
 }
 
-/// Configuration handler for vts_zone directive (simplified)
+/// Configuration handler for vts_zone directive
+///
+/// Parses the vts_zone directive arguments: zone_name and size
+/// Example: vts_zone main 10m
 ///
 /// # Safety
 ///
 /// This function is called by nginx and must maintain C ABI compatibility
 unsafe extern "C" fn ngx_http_set_vts_zone(
-    _cf: *mut ngx_conf_t,
+    cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
     _conf: *mut c_void,
 ) -> *mut c_char {
-    // For now, just accept the directive without implementation
-    // Full shared memory implementation would be added here
+    let cf = &mut *cf;
+    let args = std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts as usize);
+    
+    if args.len() != 3 {
+        let error_msg = "vts_zone directive requires exactly 2 arguments: zone_name and size\0";
+        return error_msg.as_ptr() as *mut c_char;
+    }
+    
+    // Parse zone name (args[1])
+    let zone_name_slice = std::slice::from_raw_parts(args[1].data, args[1].len as usize);
+    let zone_name = match std::str::from_utf8(zone_name_slice) {
+        Ok(name) => name,
+        Err(_) => {
+            let error_msg = "vts_zone: invalid zone name (must be valid UTF-8)\0";
+            return error_msg.as_ptr() as *mut c_char;
+        }
+    };
+    
+    // Parse zone size (args[2])
+    let zone_size_slice = std::slice::from_raw_parts(args[2].data, args[2].len as usize);
+    let zone_size_str = match std::str::from_utf8(zone_size_slice) {
+        Ok(size) => size,
+        Err(_) => {
+            let error_msg = "vts_zone: invalid zone size (must be valid UTF-8)\0";
+            return error_msg.as_ptr() as *mut c_char;
+        }
+    };
+    
+    // Parse size with units (e.g., "10m", "1g", "512k")
+    let size_bytes = match parse_size_string(zone_size_str) {
+        Ok(size) => size,
+        Err(_) => {
+            let error_msg = "vts_zone: invalid size format (use format like 10m, 1g, 512k)\0";
+            return error_msg.as_ptr() as *mut c_char;
+        }
+    };
+    
+    // Create shared memory zone
+    let zone_name_cstr = match std::ffi::CString::new(zone_name) {
+        Ok(cstr) => cstr,
+        Err(_) => {
+            let error_msg = "vts_zone: invalid zone name (contains null bytes)\0";
+            return error_msg.as_ptr() as *mut c_char;
+        }
+    };
+    let mut zone_name_ngx = ngx_str_t {
+        len: zone_name.len() as usize,
+        data: zone_name_cstr.as_ptr() as *mut u8,
+    };
+    let shm_zone = ngx_shared_memory_add(cf, &mut zone_name_ngx, size_bytes, &ngx_http_vts_module as *const _ as *mut _);
+    
+    if shm_zone.is_null() {
+        let error_msg = "vts_zone: failed to allocate shared memory zone\0";
+        return error_msg.as_ptr() as *mut c_char;
+    }
+    
+    // Set initialization callback for the shared memory zone
+    (*shm_zone).init = Some(vts_init_shm_zone);
+    (*shm_zone).data = std::ptr::null_mut(); // Will be set during initialization
+    
     std::ptr::null_mut()
 }
 
@@ -246,6 +307,53 @@ pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     spare_hook7: 0,
 };
 
+/// Parse size string with units (e.g., "10m", "1g", "512k") to bytes
+///
+/// Supports the following units:
+/// - k/K: kilobytes (1024 bytes)
+/// - m/M: megabytes (1024*1024 bytes)  
+/// - g/G: gigabytes (1024*1024*1024 bytes)
+/// - No unit: bytes
+fn parse_size_string(size_str: &str) -> Result<usize, &'static str> {
+    if size_str.is_empty() {
+        return Err("Empty size string");
+    }
+    
+    let size_str = size_str.trim();
+    let (num_str, multiplier) = if let Some(last_char) = size_str.chars().last() {
+        match last_char.to_ascii_lowercase() {
+            'k' => (&size_str[..size_str.len()-1], 1024),
+            'm' => (&size_str[..size_str.len()-1], 1024 * 1024),
+            'g' => (&size_str[..size_str.len()-1], 1024 * 1024 * 1024),
+            _ if last_char.is_ascii_digit() => (size_str, 1),
+            _ => return Err("Invalid size unit"),
+        }
+    } else {
+        return Err("Empty size string");
+    };
+    
+    let num: usize = num_str.parse().map_err(|_| "Invalid number")?;
+    
+    num.checked_mul(multiplier).ok_or("Size overflow")
+}
+
+/// Shared memory zone initialization callback
+///
+/// # Safety
+///
+/// This function is called by nginx during shared memory initialization
+extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, _data: *mut c_void) -> ngx_int_t {
+    if shm_zone.is_null() {
+        return NGX_ERROR as ngx_int_t;
+    }
+    
+    // Initialize the shared memory zone for VTS statistics
+    // For now, just mark it as successfully initialized
+    // Future implementation would set up red-black trees and data structures here
+    
+    NGX_OK as ngx_int_t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +379,32 @@ mod tests {
         let time_str = get_current_time();
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
+    }
+
+    #[test]
+    fn test_parse_size_string() {
+        // Test bytes (no unit)
+        assert_eq!(parse_size_string("1024"), Ok(1024));
+        assert_eq!(parse_size_string("512"), Ok(512));
+        
+        // Test kilobytes
+        assert_eq!(parse_size_string("1k"), Ok(1024));
+        assert_eq!(parse_size_string("1K"), Ok(1024));
+        assert_eq!(parse_size_string("10k"), Ok(10240));
+        
+        // Test megabytes
+        assert_eq!(parse_size_string("1m"), Ok(1024 * 1024));
+        assert_eq!(parse_size_string("1M"), Ok(1024 * 1024));
+        assert_eq!(parse_size_string("10m"), Ok(10 * 1024 * 1024));
+        
+        // Test gigabytes
+        assert_eq!(parse_size_string("1g"), Ok(1024 * 1024 * 1024));
+        assert_eq!(parse_size_string("1G"), Ok(1024 * 1024 * 1024));
+        
+        // Test invalid formats
+        assert!(parse_size_string("").is_err());
+        assert!(parse_size_string("abc").is_err());
+        assert!(parse_size_string("10x").is_err());
+        assert!(parse_size_string("k").is_err());
     }
 }
