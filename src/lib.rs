@@ -216,7 +216,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
 
     // Create shared memory zone
     let zone_name_cstr = match std::ffi::CString::new(zone_name) {
-        Ok(cstr) => cstr,
+        Ok(cstr) => Box::new(cstr), // Store CString in a Box to extend its lifetime
         Err(_) => {
             let error_msg = "vts_zone: invalid zone name (contains null bytes)\0";
             return error_msg.as_ptr() as *mut c_char;
