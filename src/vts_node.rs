@@ -140,10 +140,7 @@ impl VtsStatsManager {
         bytes_out: u64,
         request_time: u64,
     ) {
-        let stats = self
-            .stats
-            .entry(server_name.to_string())
-            .or_default();
+        let stats = self.stats.entry(server_name.to_string()).or_default();
         stats.update_request(status, bytes_in, bytes_out, request_time);
     }
 

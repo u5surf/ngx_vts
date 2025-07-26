@@ -178,8 +178,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
     _conf: *mut c_void,
 ) -> *mut c_char {
     let cf = &mut *cf;
-    let args =
-        std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts);
+    let args = std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts);
 
     if args.len() != 3 {
         let error_msg = "vts_zone directive requires exactly 2 arguments: zone_name and size\0";
