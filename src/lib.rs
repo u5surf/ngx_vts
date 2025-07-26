@@ -15,11 +15,13 @@ mod vts_node;
 
 /// VTS main configuration structure (simplified for now)
 #[derive(Debug)]
+#[allow(dead_code)]
 struct VtsMainConfig {
     /// Enable VTS tracking
     pub enabled: bool,
 }
 
+#[allow(dead_code)]
 impl VtsMainConfig {
     fn new() -> Self {
         Self { enabled: true }
@@ -177,7 +179,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
 ) -> *mut c_char {
     let cf = &mut *cf;
     let args =
-        std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts as usize);
+        std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts);
 
     if args.len() != 3 {
         let error_msg = "vts_zone directive requires exactly 2 arguments: zone_name and size\0";
@@ -185,7 +187,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
     }
 
     // Parse zone name (args[1])
-    let zone_name_slice = std::slice::from_raw_parts(args[1].data, args[1].len as usize);
+    let zone_name_slice = std::slice::from_raw_parts(args[1].data, args[1].len);
     let zone_name = match std::str::from_utf8(zone_name_slice) {
         Ok(name) => name,
         Err(_) => {
@@ -195,7 +197,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
     };
 
     // Parse zone size (args[2])
-    let zone_size_slice = std::slice::from_raw_parts(args[2].data, args[2].len as usize);
+    let zone_size_slice = std::slice::from_raw_parts(args[2].data, args[2].len);
     let zone_size_str = match std::str::from_utf8(zone_size_slice) {
         Ok(size) => size,
         Err(_) => {
@@ -222,14 +224,14 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
         }
     };
     let mut zone_name_ngx = ngx_str_t {
-        len: zone_name.len() as usize,
+        len: zone_name.len(),
         data: zone_name_cstr.as_ptr() as *mut u8,
     };
     let shm_zone = ngx_shared_memory_add(
         cf,
         &mut zone_name_ngx,
         size_bytes,
-        &ngx_http_vts_module as *const _ as *mut _,
+        &raw const ngx_http_vts_module as *const _ as *mut _,
     );
 
     if shm_zone.is_null() {

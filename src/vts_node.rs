@@ -11,6 +11,7 @@ use std::collections::HashMap;
 ///
 /// Stores traffic statistics for a specific virtual host or server zone
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct VtsNodeStats {
     /// Total number of requests
     pub requests: u64,
@@ -39,6 +40,7 @@ pub struct VtsNodeStats {
     pub last_request_time: u64,
 }
 
+#[allow(dead_code)]
 impl VtsNodeStats {
     /// Create a new VTS node with zero statistics
     pub fn new() -> Self {
@@ -114,11 +116,13 @@ impl Default for VtsNodeStats {
 ///
 /// This will be replaced with shared memory implementation later
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct VtsStatsManager {
     /// In-memory statistics storage (temporary implementation)
     pub stats: HashMap<String, VtsNodeStats>,
 }
 
+#[allow(dead_code)]
 impl VtsStatsManager {
     /// Create a new VTS statistics manager
     pub fn new() -> Self {
@@ -139,7 +143,7 @@ impl VtsStatsManager {
         let stats = self
             .stats
             .entry(server_name.to_string())
-            .or_insert_with(VtsNodeStats::new);
+            .or_default();
         stats.update_request(status, bytes_in, bytes_out, request_time);
     }
 
