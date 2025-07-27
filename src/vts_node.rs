@@ -163,3 +163,96 @@ impl Default for VtsStatsManager {
         Self::new()
     }
 }
+
+/// VTS Node structure for shared memory storage
+///
+/// This structure is stored directly in nginx shared memory and matches
+/// the layout of the original nginx-module-vts node structure
+#[repr(C)]
+#[allow(dead_code)]
+pub struct VtsSharedNode {
+    /// Red-black tree node (must be first for nginx compatibility)
+    pub node: ngx_rbtree_node_t,
+    
+    /// Node length (for variable-length data)
+    pub len: u16,
+    
+    /// Node type flags
+    pub stat_upstream: u8,
+    
+    /// Reserved padding
+    pub reserved: u8,
+    
+    /// Request statistics
+    pub stat_request_counter: u64,
+    pub stat_in_bytes: u64,
+    pub stat_out_bytes: u64,
+    
+    /// Response status counters
+    pub stat_1xx_counter: u64,
+    pub stat_2xx_counter: u64,
+    pub stat_3xx_counter: u64,
+    pub stat_4xx_counter: u64,
+    pub stat_5xx_counter: u64,
+    
+    /// Request timing
+    pub stat_request_time_counter: u64,
+    pub stat_request_time: u64,
+    
+    /// Cache statistics
+    pub stat_cache_max_size: u64,
+    pub stat_cache_used_size: u64,
+    
+    /// Time tracking
+    pub stat_request_time_start: ngx_msec_t,
+    pub stat_request_time_end: ngx_msec_t,
+}
+
+impl VtsSharedNode {
+    /// Create a new VTS shared node with zero statistics
+    pub fn new() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+    
+    /// Update node with request statistics
+    pub unsafe fn update_request(
+        &mut self,
+        status: u16,
+        bytes_in: u64,
+        bytes_out: u64,
+        request_time: u64,
+    ) {
+        self.stat_request_counter += 1;
+        self.stat_in_bytes += bytes_in;
+        self.stat_out_bytes += bytes_out;
+        self.stat_request_time_counter += request_time;
+        
+        // Update status counters
+        match status {
+            100..=199 => self.stat_1xx_counter += 1,
+            200..=299 => self.stat_2xx_counter += 1,
+            300..=399 => self.stat_3xx_counter += 1,
+            400..=499 => self.stat_4xx_counter += 1,
+            500..=599 => self.stat_5xx_counter += 1,
+            _ => {} // Ignore invalid status codes
+        }
+        
+        // Update timing
+        let current_time = ngx_time() as ngx_msec_t;
+        if self.stat_request_time_start == 0 {
+            self.stat_request_time_start = current_time;
+        }
+        self.stat_request_time_end = current_time;
+        
+        // Calculate average request time
+        if self.stat_request_counter > 0 {
+            self.stat_request_time = self.stat_request_time_counter / self.stat_request_counter;
+        }
+    }
+}
+
+impl Default for VtsSharedNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}

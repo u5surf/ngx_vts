@@ -10,6 +10,8 @@ use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 
+use crate::vts_node::VtsSharedNode;
+
 mod config;
 mod vts_node;
 
@@ -18,7 +20,7 @@ mod vts_node;
 /// Stores the red-black tree and slab pool for VTS statistics
 #[repr(C)]
 #[allow(dead_code)]
-struct VtsSharedContext {
+pub struct VtsSharedContext {
     /// Red-black tree for storing VTS nodes
     rbtree: *mut ngx_rbtree_t,
     /// Slab pool for memory allocation
@@ -470,6 +472,160 @@ extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, data: *mut c_void
     }
 }
 
+/// Add or update a VTS node in shared memory
+///
+/// Based on ngx_http_vhost_traffic_status_shm_add_node from the original module
+///
+/// # Safety
+///
+/// This function manipulates shared memory and must be called with proper synchronization
+pub unsafe fn vts_shm_add_node(
+    ctx: *mut VtsSharedContext,
+    key: &str,
+    status: u16,
+    bytes_in: u64,
+    bytes_out: u64,
+    request_time: u64,
+) -> Result<(), &'static str> {
+    if ctx.is_null() || (*ctx).rbtree.is_null() || (*ctx).shpool.is_null() {
+        return Err("Invalid VTS context");
+    }
+    
+    let rbtree = (*ctx).rbtree;
+    let shpool = (*ctx).shpool;
+    
+    // Calculate hash for the key
+    let hash = vts_hash_key(key);
+    
+    // Try to find existing node
+    let node = vts_lookup_node(rbtree, hash, key);
+    
+    if !node.is_null() {
+        // Update existing node
+        let vts_node = node as *mut VtsSharedNode;
+        (*vts_node).update_request(status, bytes_in, bytes_out, request_time);
+    } else {
+        // Create new node
+        let node_size = std::mem::size_of::<VtsSharedNode>() + key.len();
+        let new_node = ngx_slab_alloc_locked(shpool, node_size) as *mut VtsSharedNode;
+        
+        if new_node.is_null() {
+            return Err("Failed to allocate memory for VTS node");
+        }
+        
+        // Initialize the node
+        (*new_node) = VtsSharedNode::new();
+        (*new_node).len = key.len() as u16;
+        (*new_node).node.key = hash;
+        (*new_node).update_request(status, bytes_in, bytes_out, request_time);
+        
+        // Copy the key after the node structure
+        let key_ptr = (new_node as *mut u8).add(std::mem::size_of::<VtsSharedNode>());
+        std::ptr::copy_nonoverlapping(key.as_ptr(), key_ptr, key.len());
+        
+        // Insert into red-black tree
+        ngx_rbtree_insert(rbtree, &mut (*new_node).node);
+    }
+    
+    Ok(())
+}
+
+/// Set/update VTS node statistics
+///
+/// Based on ngx_http_vhost_traffic_status_node_set from the original module
+///
+/// # Safety
+///
+/// This function manipulates shared memory node data
+pub unsafe fn vts_node_set(
+    node: *mut VtsSharedNode,
+    status: u16,
+    bytes_in: u64,
+    bytes_out: u64,
+    request_time: u64,
+) {
+    if !node.is_null() {
+        (*node).update_request(status, bytes_in, bytes_out, request_time);
+    }
+}
+
+/// Calculate hash for a VTS key
+///
+/// Simple hash function for demonstration - in production, use nginx's hash functions
+fn vts_hash_key(key: &str) -> ngx_rbtree_key_t {
+    let mut hash: ngx_rbtree_key_t = 0;
+    for byte in key.bytes() {
+        hash = hash.wrapping_mul(31).wrapping_add(byte as ngx_rbtree_key_t);
+    }
+    hash
+}
+
+/// Lookup a VTS node in the red-black tree
+///
+/// # Safety
+///
+/// This function traverses the red-black tree in shared memory
+unsafe fn vts_lookup_node(
+    rbtree: *mut ngx_rbtree_t,
+    hash: ngx_rbtree_key_t,
+    key: &str,
+) -> *mut ngx_rbtree_node_t {
+    if rbtree.is_null() {
+        return std::ptr::null_mut();
+    }
+    
+    let sentinel = (*rbtree).sentinel;
+    let mut node = (*rbtree).root;
+    
+    while node != sentinel {
+        if hash < (*node).key {
+            node = (*node).left;
+        } else if hash > (*node).key {
+            node = (*node).right;
+        } else {
+            // Hash matches, check the actual key
+            let vts_node = node as *mut VtsSharedNode;
+            let node_key_len = (*vts_node).len as usize;
+            
+            if node_key_len == key.len() {
+                let node_key_ptr = (vts_node as *const u8).add(std::mem::size_of::<VtsSharedNode>());
+                let node_key = std::slice::from_raw_parts(node_key_ptr, node_key_len);
+                
+                if node_key == key.as_bytes() {
+                    return node;
+                }
+            }
+            
+            // Hash collision, continue searching (usually go left)
+            node = (*node).left;
+        }
+    }
+    
+    std::ptr::null_mut()
+}
+
+/// Record request statistics in VTS shared memory
+///
+/// This is the main entry point for recording traffic statistics
+///
+/// # Safety
+///
+/// This function accesses shared memory and should be called during request processing
+pub unsafe fn vts_record_request(
+    ctx: *mut VtsSharedContext,
+    server_name: &str,
+    status: u16,
+    bytes_in: u64,
+    bytes_out: u64,
+    request_time: u64,
+) -> Result<(), &'static str> {
+    if server_name.is_empty() {
+        return Err("Empty server name");
+    }
+    
+    vts_shm_add_node(ctx, server_name, status, bytes_in, bytes_out, request_time)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +687,49 @@ mod tests {
         let expected_size =
             std::mem::size_of::<*mut ngx_rbtree_t>() + std::mem::size_of::<*mut ngx_slab_pool_t>();
         assert_eq!(std::mem::size_of::<VtsSharedContext>(), expected_size);
+    }
+
+    #[test]
+    fn test_vts_hash_key() {
+        // Test hash function consistency
+        let key1 = "example.com";
+        let key2 = "example.com";
+        let key3 = "different.com";
+        
+        assert_eq!(vts_hash_key(key1), vts_hash_key(key2));
+        assert_ne!(vts_hash_key(key1), vts_hash_key(key3));
+        
+        // Test empty key
+        assert_eq!(vts_hash_key(""), 0);
+    }
+
+    #[test]
+    fn test_vts_shared_node_layout() {
+        // Verify that VtsSharedNode has the expected layout
+        // The ngx_rbtree_node_t must be first for compatibility
+        let node = VtsSharedNode::new();
+        let node_ptr = &node as *const VtsSharedNode;
+        let rbtree_node_ptr = &node.node as *const ngx_rbtree_node_t;
+        
+        assert_eq!(node_ptr as *const u8, rbtree_node_ptr as *const u8);
+    }
+
+    #[test]
+    fn test_vts_shared_node_basic() {
+        let node = VtsSharedNode::new();
+        
+        // Test initial state - all fields should be zero
+        assert_eq!(node.stat_request_counter, 0);
+        assert_eq!(node.stat_2xx_counter, 0);
+        assert_eq!(node.stat_in_bytes, 0);
+        assert_eq!(node.stat_out_bytes, 0);
+        
+        // Test node structure layout
+        let node_ptr = &node as *const VtsSharedNode;
+        let rbtree_node_ptr = &node.node as *const ngx_rbtree_node_t;
+        assert_eq!(node_ptr as *const u8, rbtree_node_ptr as *const u8);
+        
+        // Test that the structure has expected minimum size
+        assert!(std::mem::size_of::<VtsSharedNode>() >= std::mem::size_of::<ngx_rbtree_node_t>());
     }
 }
