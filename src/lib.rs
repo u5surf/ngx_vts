@@ -44,15 +44,50 @@ impl VtsMainConfig {
 
 // VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
-    // Add sample data for demonstration (in real implementation, data comes from actual requests)
+    // Record this status request (demonstrates real traffic recording)
     unsafe {
-        let _ = vts_add_sample_data();
+        let _ = vts_record_status_request();
     }
     
     // Generate VTS status content from shared memory
     let content = generate_vts_status_content();
 
     let mut buf = match request.pool().create_buffer_from_str(&content) {
+        Some(buf) => buf,
+        None => return http::HTTPStatus::INTERNAL_SERVER_ERROR.into(),
+    };
+
+    request.set_content_length_n(buf.len());
+    request.set_status(http::HTTPStatus::OK);
+
+    buf.set_last_buf(request.is_main());
+    buf.set_last_in_chain(true);
+
+    let rc = request.send_header();
+    if rc == core::Status::NGX_ERROR || rc > core::Status::NGX_OK || request.header_only() {
+        return rc;
+    }
+
+    let mut out = ngx_chain_t {
+        buf: buf.as_ngx_buf_mut(),
+        next: std::ptr::null_mut(),
+    };
+    request.output_filter(&mut out)
+});
+
+// VTS test request handler that simulates different request types
+http_request_handler!(vts_test_handler, |request: &mut http::Request| {
+    // Simulate different types of requests for testing
+    unsafe {
+        // Add some varied test requests to demonstrate different scenarios
+        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 1024, 2048, 50);
+        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 404, 256, 512, 10);
+        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 500, 512, 0, 200);
+    }
+    
+    let content = "Test request recorded! Check /status to see updated statistics.\n";
+
+    let mut buf = match request.pool().create_buffer_from_str(content) {
         Some(buf) => buf,
         None => return http::HTTPStatus::INTERNAL_SERVER_ERROR.into(),
     };
@@ -256,6 +291,22 @@ unsafe extern "C" fn ngx_http_set_vts_status(
     std::ptr::null_mut()
 }
 
+/// Configuration handler for vts_test directive
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
+unsafe extern "C" fn ngx_http_set_vts_test(
+    cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    _conf: *mut c_void,
+) -> *mut c_char {
+    let cf = unsafe { &mut *cf };
+    let clcf = http::NgxHttpCoreModule::location_conf_mut(cf).expect("core location conf");
+    clcf.handler = Some(vts_test_handler);
+    std::ptr::null_mut()
+}
+
 /// Configuration handler for vts_zone directive
 ///
 /// Parses the vts_zone directive arguments: zone_name and size
@@ -338,7 +389,7 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
 }
 
 /// Module commands configuration
-static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 3] = [
+static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 4] = [
     ngx_command_t {
         name: ngx_string!("vts_status"),
         type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
@@ -351,6 +402,14 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 3] = [
         name: ngx_string!("vts_zone"),
         type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
         set: Some(ngx_http_set_vts_zone),
+        conf: 0,
+        offset: 0,
+        post: std::ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("vts_test"),
+        type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
+        set: Some(ngx_http_set_vts_test),
         conf: 0,
         offset: 0,
         post: std::ptr::null_mut(),
@@ -721,26 +780,22 @@ extern "C" fn ngx_http_vts_postconfiguration(_cf: *mut ngx_conf_t) -> ngx_int_t 
     NGX_OK as ngx_int_t
 }
 
-/// Simple function to add test data to VTS for demonstration
+/// Record a status request to VTS
 ///
-/// This adds some sample statistics to demonstrate the functionality
-/// In a real implementation, this would be called from request handlers
+/// This records the current status endpoint access as a request
+/// Eventually this should be replaced with real request phase integration
 ///
 /// # Safety
 ///
 /// This function manipulates shared memory
-pub unsafe fn vts_add_sample_data() -> Result<(), &'static str> {
+pub unsafe fn vts_record_status_request() -> Result<(), &'static str> {
     if VTS_GLOBAL_CTX.is_null() {
         return Err("VTS context not initialized");
     }
 
-    // Add some sample server statistics
-    vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 1024, 2048, 50)?;
-    vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 512, 1536, 25)?;
-    vts_record_request(VTS_GLOBAL_CTX, "localhost", 404, 256, 512, 10)?;
-    
-    vts_record_request(VTS_GLOBAL_CTX, "example.com", 200, 2048, 4096, 100)?;
-    vts_record_request(VTS_GLOBAL_CTX, "example.com", 500, 1024, 0, 200)?;
+    // Record this status endpoint access
+    // Use "localhost" since that's what's configured in your nginx
+    vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 256, 512, 5)?;
     
     Ok(())
 }
