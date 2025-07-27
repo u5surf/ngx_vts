@@ -48,7 +48,7 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     unsafe {
         let _ = vts_record_status_request();
     }
-    
+
     // Generate VTS status content from shared memory
     let content = generate_vts_status_content();
 
@@ -84,7 +84,7 @@ http_request_handler!(vts_test_handler, |request: &mut http::Request| {
         let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 404, 256, 512, 10);
         let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 500, 512, 0, 200);
     }
-    
+
     let content = "Test request recorded! Check /status to see updated statistics.\n";
 
     let mut buf = match request.pool().create_buffer_from_str(content) {
@@ -158,11 +158,12 @@ fn generate_vts_status_content() -> String {
         vts_walk_tree((*rbtree).root, sentinel, &mut |node| {
             let vts_node = node as *mut VtsSharedNode;
             let node_key_len = (*vts_node).len as usize;
-            
+
             if node_key_len > 0 {
-                let node_key_ptr = (vts_node as *const u8).add(std::mem::size_of::<VtsSharedNode>());
+                let node_key_ptr =
+                    (vts_node as *const u8).add(std::mem::size_of::<VtsSharedNode>());
                 let node_key = std::slice::from_raw_parts(node_key_ptr, node_key_len);
-                
+
                 if let Ok(server_name) = std::str::from_utf8(node_key) {
                     output.push_str(&format!(
                         "Server: {}\n\
@@ -180,7 +181,7 @@ fn generate_vts_status_content() -> String {
                         (*vts_node).stat_out_bytes,
                         (*vts_node).stat_request_time,
                     ));
-                    
+
                     total_requests += (*vts_node).stat_request_counter;
                     total_2xx += (*vts_node).stat_2xx_counter;
                     total_4xx += (*vts_node).stat_4xx_counter;
@@ -197,11 +198,7 @@ fn generate_vts_status_content() -> String {
              Total 2xx: {}\n\
              Total 4xx: {}\n\
              Total 5xx: {}\n",
-            server_count,
-            total_requests,
-            total_2xx,
-            total_4xx,
-            total_5xx
+            server_count, total_requests, total_2xx, total_4xx, total_5xx
         ));
 
         output
@@ -213,14 +210,17 @@ fn generate_vts_status_content() -> String {
 /// # Safety
 ///
 /// This function traverses shared memory tree structures
-unsafe fn vts_walk_tree<F>(node: *mut ngx_rbtree_node_t, sentinel: *mut ngx_rbtree_node_t, f: &mut F)
-where
+unsafe fn vts_walk_tree<F>(
+    node: *mut ngx_rbtree_node_t,
+    sentinel: *mut ngx_rbtree_node_t,
+    f: &mut F,
+) where
     F: FnMut(*mut ngx_rbtree_node_t),
 {
     if node == sentinel {
         return;
     }
-    
+
     vts_walk_tree((*node).left, sentinel, f);
     f(node);
     vts_walk_tree((*node).right, sentinel, f);
@@ -630,16 +630,16 @@ pub unsafe fn vts_shm_add_node(
     if ctx.is_null() || (*ctx).rbtree.is_null() || (*ctx).shpool.is_null() {
         return Err("Invalid VTS context");
     }
-    
+
     let rbtree = (*ctx).rbtree;
     let shpool = (*ctx).shpool;
-    
+
     // Calculate hash for the key
     let hash = vts_hash_key(key);
-    
+
     // Try to find existing node
     let node = vts_lookup_node(rbtree, hash, key);
-    
+
     if !node.is_null() {
         // Update existing node
         let vts_node = node as *mut VtsSharedNode;
@@ -648,25 +648,25 @@ pub unsafe fn vts_shm_add_node(
         // Create new node
         let node_size = std::mem::size_of::<VtsSharedNode>() + key.len();
         let new_node = ngx_slab_alloc_locked(shpool, node_size) as *mut VtsSharedNode;
-        
+
         if new_node.is_null() {
             return Err("Failed to allocate memory for VTS node");
         }
-        
+
         // Initialize the node
         (*new_node) = VtsSharedNode::new();
         (*new_node).len = key.len() as u16;
         (*new_node).node.key = hash;
         (*new_node).update_request(status, bytes_in, bytes_out, request_time);
-        
+
         // Copy the key after the node structure
         let key_ptr = (new_node as *mut u8).add(std::mem::size_of::<VtsSharedNode>());
         std::ptr::copy_nonoverlapping(key.as_ptr(), key_ptr, key.len());
-        
+
         // Insert into red-black tree
         ngx_rbtree_insert(rbtree, &mut (*new_node).node);
     }
-    
+
     Ok(())
 }
 
@@ -713,10 +713,10 @@ unsafe fn vts_lookup_node(
     if rbtree.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     let sentinel = (*rbtree).sentinel;
     let mut node = (*rbtree).root;
-    
+
     while node != sentinel {
         if hash < (*node).key {
             node = (*node).left;
@@ -726,21 +726,22 @@ unsafe fn vts_lookup_node(
             // Hash matches, check the actual key
             let vts_node = node as *mut VtsSharedNode;
             let node_key_len = (*vts_node).len as usize;
-            
+
             if node_key_len == key.len() {
-                let node_key_ptr = (vts_node as *const u8).add(std::mem::size_of::<VtsSharedNode>());
+                let node_key_ptr =
+                    (vts_node as *const u8).add(std::mem::size_of::<VtsSharedNode>());
                 let node_key = std::slice::from_raw_parts(node_key_ptr, node_key_len);
-                
+
                 if node_key == key.as_bytes() {
                     return node;
                 }
             }
-            
+
             // Hash collision, continue searching (usually go left)
             node = (*node).left;
         }
     }
-    
+
     std::ptr::null_mut()
 }
 
@@ -762,7 +763,7 @@ pub unsafe fn vts_record_request(
     if server_name.is_empty() {
         return Err("Empty server name");
     }
-    
+
     vts_shm_add_node(ctx, server_name, status, bytes_in, bytes_out, request_time)
 }
 
@@ -796,7 +797,7 @@ pub unsafe fn vts_record_status_request() -> Result<(), &'static str> {
     // Record this status endpoint access
     // Use "localhost" since that's what's configured in your nginx
     vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 256, 512, 5)?;
-    
+
     Ok(())
 }
 
@@ -827,7 +828,9 @@ mod tests {
         assert!(content.contains("Version: 0.1.0"));
         assert!(content.contains("test-hostname"));
         // The content should either show statistics or indicate shared memory not initialized
-        assert!(content.contains("VTS Statistics") || content.contains("Shared memory not initialized"));
+        assert!(
+            content.contains("VTS Statistics") || content.contains("Shared memory not initialized")
+        );
     }
 
     #[test]
@@ -879,10 +882,10 @@ mod tests {
         let key1 = "example.com";
         let key2 = "example.com";
         let key3 = "different.com";
-        
+
         assert_eq!(vts_hash_key(key1), vts_hash_key(key2));
         assert_ne!(vts_hash_key(key1), vts_hash_key(key3));
-        
+
         // Test empty key
         assert_eq!(vts_hash_key(""), 0);
     }
@@ -894,25 +897,25 @@ mod tests {
         let node = VtsSharedNode::new();
         let node_ptr = &node as *const VtsSharedNode;
         let rbtree_node_ptr = &node.node as *const ngx_rbtree_node_t;
-        
+
         assert_eq!(node_ptr as *const u8, rbtree_node_ptr as *const u8);
     }
 
     #[test]
     fn test_vts_shared_node_basic() {
         let node = VtsSharedNode::new();
-        
+
         // Test initial state - all fields should be zero
         assert_eq!(node.stat_request_counter, 0);
         assert_eq!(node.stat_2xx_counter, 0);
         assert_eq!(node.stat_in_bytes, 0);
         assert_eq!(node.stat_out_bytes, 0);
-        
+
         // Test node structure layout
         let node_ptr = &node as *const VtsSharedNode;
         let rbtree_node_ptr = &node.node as *const ngx_rbtree_node_t;
         assert_eq!(node_ptr as *const u8, rbtree_node_ptr as *const u8);
-        
+
         // Test that the structure has expected minimum size
         assert!(std::mem::size_of::<VtsSharedNode>() >= std::mem::size_of::<ngx_rbtree_node_t>());
     }
