@@ -210,8 +210,18 @@ pub struct VtsSharedNode {
 
 impl VtsSharedNode {
     /// Create a new VTS shared node with zero statistics
+    /// 
+    /// # Safety
+    /// 
+    /// This initializes all fields to safe zero values rather than using std::mem::zeroed()
     pub fn new() -> Self {
-        unsafe { std::mem::zeroed() }
+        // Use MaybeUninit to safely initialize the structure
+        let mut node = std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            // Zero out the memory
+            std::ptr::write_bytes(node.as_mut_ptr(), 0, 1);
+            node.assume_init()
+        }
     }
 
     /// Update node with request statistics
@@ -238,7 +248,7 @@ impl VtsSharedNode {
         }
 
         // Update timing
-        let current_time = ngx_time() as ngx_msec_t;
+        let current_time = (ngx_time() * 1000) as ngx_msec_t;
         if self.stat_request_time_start == 0 {
             self.stat_request_time_start = current_time;
         }
