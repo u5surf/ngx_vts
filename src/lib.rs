@@ -80,9 +80,10 @@ http_request_handler!(vts_test_handler, |request: &mut http::Request| {
     // Simulate different types of requests for testing
     unsafe {
         // Add some varied test requests to demonstrate different scenarios
-        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 200, 1024, 2048, 50);
-        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 404, 256, 512, 10);
-        let _ = vts_record_request(VTS_GLOBAL_CTX, "localhost", 500, 512, 0, 200);
+        let host = request.headers().get("Host").map_or("unknown", |h| h.as_str());
+        let _ = vts_record_request(VTS_GLOBAL_CTX, host, 200, 1024, 2048, 50);
+        let _ = vts_record_request(VTS_GLOBAL_CTX, host, 404, 256, 512, 10);
+        let _ = vts_record_request(VTS_GLOBAL_CTX, host, 500, 512, 0, 200);
     }
 
     let content = "Test request recorded! Check /status to see updated statistics.\n";
