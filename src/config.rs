@@ -4,6 +4,7 @@
 ///
 /// Contains settings for enabling status endpoint and zone tracking
 #[repr(C)]
+#[allow(dead_code)]
 pub struct VtsConfig {
     /// Enable the VTS status endpoint
     pub enable_status: bool,
@@ -13,6 +14,7 @@ pub struct VtsConfig {
 
 impl VtsConfig {
     /// Create a new VTS configuration with default settings
+    #[allow(dead_code)]
     pub fn new() -> Self {
         VtsConfig {
             enable_status: false,
