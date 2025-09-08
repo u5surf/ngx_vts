@@ -504,8 +504,63 @@ unsafe extern "C" fn ngx_http_set_vts_zone(
     std::ptr::null_mut()
 }
 
+/// Configuration handler for vts_upstream_stats directive
+///
+/// Enables or disables upstream statistics collection
+/// Example: vts_upstream_stats on
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
+unsafe extern "C" fn ngx_http_set_vts_upstream_stats(
+    _cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    _conf: *mut c_void,
+) -> *mut c_char {
+    // For now, just accept the directive without detailed processing
+    // TODO: Implement proper configuration structure to store the flag
+    // This allows the directive to be recognized by nginx
+    std::ptr::null_mut()
+}
+
+/// Configuration handler for vts_filter directive
+///
+/// Enables or disables filtering functionality
+/// Example: vts_filter on
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
+unsafe extern "C" fn ngx_http_set_vts_filter(
+    _cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    _conf: *mut c_void,
+) -> *mut c_char {
+    // For now, just accept the directive without detailed processing
+    // TODO: Implement proper configuration structure to store the flag
+    std::ptr::null_mut()
+}
+
+/// Configuration handler for vts_upstream_zone directive
+///
+/// Sets the upstream zone name for statistics tracking
+/// Example: vts_upstream_zone backend_zone
+///
+/// # Safety
+///
+/// This function is called by nginx and must maintain C ABI compatibility
+unsafe extern "C" fn ngx_http_set_vts_upstream_zone(
+    _cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    _conf: *mut c_void,
+) -> *mut c_char {
+    // For now, just accept the directive without detailed processing
+    // TODO: Implement proper upstream zone configuration
+    std::ptr::null_mut()
+}
+
 /// Module commands configuration
-static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 3] = [
+static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 6] = [
     ngx_command_t {
         name: ngx_string!("vts_status"),
         type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
@@ -518,6 +573,30 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 3] = [
         name: ngx_string!("vts_zone"),
         type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
         set: Some(ngx_http_set_vts_zone),
+        conf: 0,
+        offset: 0,
+        post: std::ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("vts_upstream_stats"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG) as ngx_uint_t,
+        set: Some(ngx_http_set_vts_upstream_stats),
+        conf: 0,
+        offset: 0,
+        post: std::ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("vts_filter"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG) as ngx_uint_t,
+        set: Some(ngx_http_set_vts_filter),
+        conf: 0,
+        offset: 0,
+        post: std::ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("vts_upstream_zone"),
+        type_: (NGX_HTTP_UPS_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
+        set: Some(ngx_http_set_vts_upstream_zone),
         conf: 0,
         offset: 0,
         post: std::ptr::null_mut(),
