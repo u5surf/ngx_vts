@@ -111,7 +111,7 @@ impl VtsNodeStats {
     fn get_current_time() -> u64 {
         #[cfg(not(test))]
         {
-            unsafe { ngx_time() as u64 }
+            ngx_time() as u64
         }
         #[cfg(test)]
         {

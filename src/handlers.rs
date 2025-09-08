@@ -1,17 +1,17 @@
 //! HTTP request handlers for VTS module
-//! 
+//!
 //! This module is currently unused but prepared for future implementation
 
 #![allow(dead_code, unused_imports)]
 
+use crate::config::VtsConfig;
+use crate::prometheus::PrometheusFormatter;
+use crate::vts_node::VtsStatsManager;
 use ngx::ffi::*;
+use ngx::ngx_string;
 use ngx::{core, http, log};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
-use crate::vts_node::VtsStatsManager;
-use crate::prometheus::PrometheusFormatter;
-use crate::config::VtsConfig;
-use ngx::ngx_string;
 
 pub struct VtsHandler;
 
@@ -26,16 +26,19 @@ impl VtsHandler {
 
             // Get stats manager from global state
             if let Ok(manager) = crate::VTS_MANAGER.read() {
-                Self::handle_integrated_vts_response(r, &*manager)
+                Self::handle_integrated_vts_response(r, &manager)
             } else {
                 NGX_HTTP_INTERNAL_SERVER_ERROR as ngx_int_t
             }
         }
     }
 
-    unsafe fn handle_integrated_vts_response(r: *mut ngx_http_request_t, manager: &VtsStatsManager) -> ngx_int_t {
+    unsafe fn handle_integrated_vts_response(
+        r: *mut ngx_http_request_t,
+        manager: &VtsStatsManager,
+    ) -> ngx_int_t {
         let formatter = PrometheusFormatter::new();
-        
+
         // Get all upstream stats and generate Prometheus metrics
         let upstream_zones = manager.get_all_upstream_zones();
         let prometheus_content = if !upstream_zones.is_empty() {
@@ -53,14 +56,13 @@ impl VtsHandler {
                 env!("CARGO_PKG_VERSION")
             )
         };
-        
+
         let content_type = ngx_string!("text/plain; version=0.0.4; charset=utf-8");
         (*r).headers_out.content_type = content_type;
         (*r).headers_out.content_type_len = content_type.len;
 
         Self::send_response(r, prometheus_content.as_bytes())
     }
-
 
     unsafe fn send_response(r: *mut ngx_http_request_t, content: &[u8]) -> ngx_int_t {
         // Set status
@@ -98,5 +100,4 @@ impl VtsHandler {
         // Send output
         ngx_http_output_filter(r, out)
     }
-
 }
