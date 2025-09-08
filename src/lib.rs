@@ -579,7 +579,8 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 6] = [
     },
     ngx_command_t {
         name: ngx_string!("vts_upstream_stats"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG) as ngx_uint_t,
+        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG)
+            as ngx_uint_t,
         set: Some(ngx_http_set_vts_upstream_stats),
         conf: 0,
         offset: 0,
@@ -587,7 +588,8 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 6] = [
     },
     ngx_command_t {
         name: ngx_string!("vts_filter"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG) as ngx_uint_t,
+        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG)
+            as ngx_uint_t,
         set: Some(ngx_http_set_vts_filter),
         conf: 0,
         offset: 0,
