@@ -5,7 +5,8 @@
 //! nginx-module-vts implementation.
 
 use crate::upstream_stats::UpstreamZone;
-use ngx::ffi::*;
+#[cfg(not(test))]
+use ngx::ffi::ngx_time;
 use std::collections::HashMap;
 
 /// VTS Node statistics data structure
@@ -90,7 +91,7 @@ impl VtsNodeStats {
         }
 
         // Update timestamps
-        let current_time = ngx_time() as u64;
+        let current_time = Self::get_current_time();
         if self.first_request_time == 0 {
             self.first_request_time = current_time;
         }
@@ -103,6 +104,22 @@ impl VtsNodeStats {
             self.request_time_total as f64 / self.requests as f64
         } else {
             0.0
+        }
+    }
+
+    /// Get current time (nginx-safe version for testing)
+    fn get_current_time() -> u64 {
+        #[cfg(not(test))]
+        {
+            unsafe { ngx_time() as u64 }
+        }
+        #[cfg(test)]
+        {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
         }
     }
 }

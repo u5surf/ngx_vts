@@ -9,8 +9,14 @@ use ngx::ffi::*;
 use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+
+use crate::vts_node::VtsStatsManager;
+use crate::prometheus::PrometheusFormatter;
 
 mod config;
+mod handlers;
 mod prometheus;
 mod stats;
 mod upstream_stats;
@@ -26,6 +32,46 @@ struct VtsSharedContext {
     rbtree: *mut ngx_rbtree_t,
     /// Slab pool for memory allocation
     shpool: *mut ngx_slab_pool_t,
+}
+
+/// Global VTS statistics manager
+static VTS_MANAGER: std::sync::LazyLock<Arc<RwLock<VtsStatsManager>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(VtsStatsManager::new())));
+
+/// Update server zone statistics
+pub fn update_server_zone_stats(
+    server_name: &str,
+    status: u16,
+    bytes_in: u64,
+    bytes_out: u64,
+    request_time: u64,
+) {
+    if let Ok(mut manager) = VTS_MANAGER.write() {
+        manager.update_server_stats(server_name, status, bytes_in, bytes_out, request_time);
+    }
+}
+
+/// Update upstream statistics
+pub fn update_upstream_zone_stats(
+    upstream_name: &str,
+    upstream_addr: &str,
+    request_time: u64,
+    upstream_response_time: u64,
+    bytes_sent: u64,
+    bytes_received: u64,
+    status_code: u16,
+) {
+    if let Ok(mut manager) = VTS_MANAGER.write() {
+        manager.update_upstream_stats(
+            upstream_name,
+            upstream_addr,
+            request_time,
+            upstream_response_time,
+            bytes_sent,
+            bytes_received,
+            status_code,
+        );
+    }
 }
 
 /// VTS main configuration structure (simplified for now)
@@ -80,38 +126,226 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
 ///
 /// A formatted string containing VTS status information
 fn generate_vts_status_content() -> String {
-    // Generate a basic VTS status response without accessing nginx internal stats
-    // since they may not be directly accessible through the current API
-    format!(
+    let manager = VTS_MANAGER.read().unwrap();
+    let formatter = PrometheusFormatter::new();
+    
+    // Get all server statistics
+    let server_stats = manager.get_all_stats();
+    
+    // Get all upstream statistics
+    let upstream_zones = manager.get_all_upstream_zones();
+    
+    let mut content = String::new();
+    
+    // Header information
+    content.push_str(&format!(
         "# nginx-vts-rust\n\
-         # Version: 0.1.0\n\
+         # Version: {}\n\
          # Hostname: {}\n\
          # Current Time: {}\n\
          \n\
-         # VTS Status\n\
+         # VTS Status: Active\n\
          # Module: nginx-vts-rust\n\
-         # Status: Active\n\
-         \n\
-         # Basic Server Information:\n\
-         Active connections: 1\n\
-         server accepts handled requests\n\
-          1 1 1\n\
-         Reading: 0 Writing: 1 Waiting: 0\n\
-         \n\
-         # VTS Statistics\n\
-         # Server zones:\n\
-         # - localhost: 1 request(s)\n\
-         # - Total servers: 1\n\
-         # - Active zones: 1\n\
-         \n\
-         # Request Statistics:\n\
-         # Total requests: 1\n\
-         # 2xx responses: 1\n\
-         # 4xx responses: 0\n\
-         # 5xx responses: 0\n",
+         \n",
+        env!("CARGO_PKG_VERSION"),
         get_hostname(),
         get_current_time()
-    )
+    ));
+
+    // Server zones information
+    if !server_stats.is_empty() {
+        content.push_str("# Server Zones:\n");
+        let mut total_requests = 0u64;
+        let mut total_2xx = 0u64;
+        let mut total_4xx = 0u64;
+        let mut total_5xx = 0u64;
+
+        for (zone, stats) in &server_stats {
+            content.push_str(&format!(
+                "#   {}: {} requests, {:.2}ms avg response time\n",
+                zone, 
+                stats.requests,
+                stats.avg_request_time()
+            ));
+            
+            total_requests += stats.requests;
+            total_2xx += stats.status_2xx;
+            total_4xx += stats.status_4xx;
+            total_5xx += stats.status_5xx;
+        }
+        
+        content.push_str(&format!(
+            "# Total Server Zones: {}\n\
+             # Total Requests: {}\n\
+             # 2xx Responses: {}\n\
+             # 4xx Responses: {}\n\
+             # 5xx Responses: {}\n\
+             \n",
+            server_stats.len(),
+            total_requests,
+            total_2xx, 
+            total_4xx,
+            total_5xx
+        ));
+    }
+
+    // Upstream zones information  
+    if !upstream_zones.is_empty() {
+        content.push_str("# Upstream Zones:\n");
+        for (upstream_name, zone) in upstream_zones {
+            content.push_str(&format!(
+                "#   {}: {} servers, {} total requests\n",
+                upstream_name,
+                zone.servers.len(),
+                zone.total_requests()
+            ));
+            
+            for (server_addr, server) in &zone.servers {
+                let status_2xx = server.responses.status_2xx;
+                let status_4xx = server.responses.status_4xx; 
+                let status_5xx = server.responses.status_5xx;
+                content.push_str(&format!(
+                    "#     - {}: {} req, {}ms avg ({}×2xx, {}×4xx, {}×5xx)\n",
+                    server_addr,
+                    server.request_counter,
+                    if server.request_counter > 0 {
+                        (server.request_time_total + server.response_time_total) / server.request_counter
+                    } else { 0 },
+                    status_2xx,
+                    status_4xx,
+                    status_5xx
+                ));
+            }
+        }
+        content.push_str(&format!("# Total Upstream Zones: {}\n\n", upstream_zones.len()));
+    }
+
+    // Generate Prometheus metrics section
+    content.push_str("# Prometheus Metrics:\n");
+    
+    // Generate server zone metrics if available
+    if !server_stats.is_empty() {
+        // Convert server stats to format expected by PrometheusFormatter
+        // Note: This is a simplified conversion - in production you'd want proper conversion
+        let mut prometheus_stats = HashMap::new();
+        for (zone, stats) in &server_stats {
+            prometheus_stats.insert(zone.clone(), stats.clone());
+        }
+        content.push_str("# Server Zone Metrics:\n");
+        content.push_str(&format!("# (Server zones: {})\n", prometheus_stats.len()));
+    }
+    
+    // Generate upstream metrics
+    if !upstream_zones.is_empty() {
+        let upstream_metrics = formatter.format_upstream_stats(upstream_zones);
+        content.push_str(&upstream_metrics);
+    }
+    
+    content
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn test_integrated_vts_status_functionality() {
+        // Test the integrated VTS status with upstream stats
+        
+        // Add some sample server zone data
+        update_server_zone_stats("example.com", 200, 1024, 2048, 150);
+        update_server_zone_stats("example.com", 404, 512, 256, 80);
+        update_server_zone_stats("api.example.com", 200, 2048, 4096, 200);
+        
+        // Add some upstream stats
+        update_upstream_zone_stats("backend_pool", "192.168.1.10:80", 100, 50, 1500, 800, 200);
+        update_upstream_zone_stats("backend_pool", "192.168.1.11:80", 150, 75, 2000, 1000, 200);
+        update_upstream_zone_stats("backend_pool", "192.168.1.10:80", 120, 60, 1200, 600, 404);
+        
+        update_upstream_zone_stats("api_pool", "192.168.2.10:8080", 80, 40, 800, 400, 200);
+        update_upstream_zone_stats("api_pool", "192.168.2.11:8080", 300, 200, 3000, 1500, 500);
+        
+        // Generate VTS status content
+        let status_content = generate_vts_status_content();
+        
+        // Verify basic structure
+        assert!(status_content.contains("# nginx-vts-rust"));
+        assert!(status_content.contains("# VTS Status: Active"));
+        
+        // Verify server zones are included
+        assert!(status_content.contains("# Server Zones:"));
+        assert!(status_content.contains("example.com: 2 requests"));
+        assert!(status_content.contains("api.example.com: 1 requests"));
+        
+        // Verify total counters
+        assert!(status_content.contains("# Total Server Zones: 2"));
+        assert!(status_content.contains("# Total Requests: 3"));
+        assert!(status_content.contains("# 2xx Responses: 2"));
+        assert!(status_content.contains("# 4xx Responses: 1"));
+        
+        // Verify upstream zones are included
+        assert!(status_content.contains("# Upstream Zones:"));
+        assert!(status_content.contains("backend_pool: 2 servers"));
+        assert!(status_content.contains("api_pool: 2 servers"));
+        assert!(status_content.contains("# Total Upstream Zones: 2"));
+        
+        // Verify Prometheus metrics section exists
+        assert!(status_content.contains("# Prometheus Metrics:"));
+        assert!(status_content.contains("nginx_vts_upstream_requests_total"));
+        assert!(status_content.contains("nginx_vts_upstream_responses_total"));
+        
+        // Verify specific upstream metrics
+        assert!(status_content.contains("backend_pool"));
+        assert!(status_content.contains("192.168.1.10:80"));
+        assert!(status_content.contains("192.168.1.11:80"));
+        assert!(status_content.contains("api_pool"));
+        
+        println!("=== Generated VTS Status Content ===");
+        println!("{}", status_content);
+        println!("=== End VTS Status Content ===");
+    }
+    
+    #[test]
+    fn test_vts_stats_persistence() {
+        // Test that stats persist across multiple updates
+        
+        let initial_content = generate_vts_status_content();
+        let _initial_backend_requests = if initial_content.contains("test_backend") { 1 } else { 0 };
+        
+        // Add stats
+        update_upstream_zone_stats("test_backend", "10.0.0.1:80", 100, 50, 1000, 500, 200);
+        
+        let content1 = generate_vts_status_content();
+        assert!(content1.contains("test_backend"));
+        
+        // Add more stats to same upstream
+        update_upstream_zone_stats("test_backend", "10.0.0.1:80", 120, 60, 1200, 600, 200);
+        update_upstream_zone_stats("test_backend", "10.0.0.2:80", 80, 40, 800, 400, 200);
+        
+        let content2 = generate_vts_status_content();
+        assert!(content2.contains("test_backend: 2 servers"));
+        
+        // Verify metrics accumulation
+        let manager = VTS_MANAGER.read().unwrap();
+        let backend_zone = manager.get_upstream_zone("test_backend").unwrap();
+        let server1 = backend_zone.servers.get("10.0.0.1:80").unwrap();
+        assert_eq!(server1.request_counter, 2);
+        
+        let server2 = backend_zone.servers.get("10.0.0.2:80").unwrap();
+        assert_eq!(server2.request_counter, 1);
+    }
+    
+    #[test]
+    fn test_empty_vts_stats() {
+        // Test VTS status generation with empty stats
+        // Note: This may not be truly empty if other tests have run first
+        let content = generate_vts_status_content();
+        
+        // Should still have basic structure
+        assert!(content.contains("# nginx-vts-rust"));
+        assert!(content.contains("# VTS Status: Active"));
+        assert!(content.contains("# Prometheus Metrics:"));
+    }
 }
 
 /// Get system hostname (nginx-independent version for testing)
@@ -489,8 +723,9 @@ mod tests {
         let content = generate_vts_status_content();
         assert!(content.contains("nginx-vts-rust"));
         assert!(content.contains("Version: 0.1.0"));
-        assert!(content.contains("Active connections"));
+        assert!(content.contains("# VTS Status: Active"));
         assert!(content.contains("test-hostname"));
+        assert!(content.contains("# Prometheus Metrics:"));
     }
 
     #[test]
