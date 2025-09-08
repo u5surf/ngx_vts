@@ -41,3 +41,6 @@ nginx.conf.local
 # Development environment
 .env
 .env.local
+
+# claude code develop docs
+/docs/
