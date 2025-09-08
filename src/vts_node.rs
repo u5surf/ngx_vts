@@ -7,7 +7,6 @@
 use ngx::ffi::*;
 use std::collections::HashMap;
 use crate::upstream_stats::UpstreamZone;
-use crate::cache_stats::{CacheZoneStats, CacheStatus};
 
 /// VTS Node statistics data structure
 ///
@@ -125,9 +124,6 @@ pub struct VtsStatsManager {
     
     /// Upstream zones statistics storage
     pub upstream_zones: HashMap<String, UpstreamZone>,
-    
-    /// Cache zones statistics storage  
-    pub cache_zones: HashMap<String, CacheZoneStats>,
 }
 
 #[allow(dead_code)]
@@ -137,7 +133,6 @@ impl VtsStatsManager {
         Self {
             stats: HashMap::new(),
             upstream_zones: HashMap::new(),
-            cache_zones: HashMap::new(),
         }
     }
 
@@ -220,55 +215,6 @@ impl VtsStatsManager {
             .or_insert_with(|| UpstreamZone::new(upstream_name))
     }
 
-    // --- Cache Zone Management ---
-
-    /// Update cache statistics
-    pub fn update_cache_stats(
-        &mut self,
-        cache_zone_name: &str,
-        cache_status: CacheStatus,
-        bytes_transferred: u64,
-    ) {
-        let cache_zone = self.cache_zones
-            .entry(cache_zone_name.to_string())
-            .or_insert_with(|| CacheZoneStats::new(cache_zone_name, 0)); // 0 means unlimited size
-
-        cache_zone.update_cache_access(cache_status, bytes_transferred);
-    }
-
-    /// Update cache zone size
-    pub fn update_cache_size(&mut self, cache_zone_name: &str, used_size: u64, max_size: Option<u64>) {
-        let cache_zone = self.cache_zones
-            .entry(cache_zone_name.to_string())
-            .or_insert_with(|| CacheZoneStats::new(cache_zone_name, max_size.unwrap_or(0)));
-
-        if let Some(max) = max_size {
-            cache_zone.max_size = max;
-        }
-        cache_zone.update_cache_size(used_size);
-    }
-
-    /// Get cache zone statistics
-    pub fn get_cache_zone(&self, cache_zone_name: &str) -> Option<&CacheZoneStats> {
-        self.cache_zones.get(cache_zone_name)
-    }
-
-    /// Get mutable cache zone statistics
-    pub fn get_cache_zone_mut(&mut self, cache_zone_name: &str) -> Option<&mut CacheZoneStats> {
-        self.cache_zones.get_mut(cache_zone_name)
-    }
-
-    /// Get all cache zones
-    pub fn get_all_cache_zones(&self) -> &HashMap<String, CacheZoneStats> {
-        &self.cache_zones
-    }
-
-    /// Get or create cache zone
-    pub fn get_or_create_cache_zone(&mut self, cache_zone_name: &str, max_size: u64) -> &mut CacheZoneStats {
-        self.cache_zones
-            .entry(cache_zone_name.to_string())
-            .or_insert_with(|| CacheZoneStats::new(cache_zone_name, max_size))
-    }
 }
 
 impl Default for VtsStatsManager {
@@ -280,13 +226,140 @@ impl Default for VtsStatsManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prometheus::PrometheusFormatter;
+    use std::sync::{Arc, RwLock};
+    use std::thread;
     
     #[test]
     fn test_vts_stats_manager_initialization() {
         let manager = VtsStatsManager::new();
         assert!(manager.stats.is_empty());
         assert!(manager.upstream_zones.is_empty());
-        assert!(manager.cache_zones.is_empty());
+    }
+
+    #[test]
+    fn test_complete_upstream_pipeline() {
+        let mut manager = VtsStatsManager::new();
+        
+        // Simulate realistic traffic to multiple upstreams
+        let upstreams_data = [
+            ("web_backend", "192.168.1.10:80", 120, 60, 1500, 800, 200),
+            ("web_backend", "192.168.1.11:80", 180, 90, 2000, 1000, 200),
+            ("web_backend", "192.168.1.10:80", 250, 120, 1200, 600, 404),
+            ("api_backend", "192.168.2.10:8080", 80, 40, 800, 400, 200),
+            ("api_backend", "192.168.2.11:8080", 300, 200, 3000, 1500, 500),
+        ];
+        
+        for (upstream, server, req_time, resp_time, sent, recv, status) in upstreams_data.iter() {
+            manager.update_upstream_stats(upstream, server, *req_time, *resp_time, *sent, *recv, *status);
+        }
+        
+        // Verify data collection
+        let web_backend = manager.get_upstream_zone("web_backend").unwrap();
+        assert_eq!(web_backend.servers.len(), 2);
+        assert_eq!(web_backend.total_requests(), 3);
+        
+        let api_backend = manager.get_upstream_zone("api_backend").unwrap();
+        assert_eq!(api_backend.servers.len(), 2);
+        assert_eq!(api_backend.total_requests(), 2);
+        
+        // Generate Prometheus metrics
+        let formatter = PrometheusFormatter::new();
+        let all_upstreams = manager.get_all_upstream_zones();
+        let prometheus_output = formatter.format_upstream_stats(all_upstreams);
+        
+        // Verify Prometheus output contains expected metrics
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.10:80\"} 2"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.11:80\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.10:8080\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.11:8080\"} 1"));
+        
+        // Verify status code metrics
+        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"2xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"4xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"api_backend\",server=\"192.168.2.11:8080\",status=\"5xx\"} 1"));
+    }
+
+    #[test]
+    fn test_memory_efficiency_large_dataset() {
+        let mut manager = VtsStatsManager::new();
+        
+        const NUM_UPSTREAMS: usize = 5;
+        const NUM_SERVERS_PER_UPSTREAM: usize = 3;
+        const NUM_REQUESTS_PER_SERVER: usize = 50;
+        
+        for upstream_id in 0..NUM_UPSTREAMS {
+            let upstream_name = format!("backend_{}", upstream_id);
+            
+            for server_id in 0..NUM_SERVERS_PER_UPSTREAM {
+                let server_addr = format!("10.0.{}.{}:8080", upstream_id, server_id);
+                
+                for request_id in 0..NUM_REQUESTS_PER_SERVER {
+                    manager.update_upstream_stats(
+                        &upstream_name,
+                        &server_addr,
+                        100 + (request_id % 200) as u64,
+                        50 + (request_id % 100) as u64,
+                        1500,
+                        800,
+                        if request_id % 10 == 0 { 500 } else { 200 },
+                    );
+                }
+            }
+        }
+        
+        // Verify all data was collected correctly
+        let all_upstreams = manager.get_all_upstream_zones();
+        assert_eq!(all_upstreams.len(), NUM_UPSTREAMS);
+        
+        for (_upstream_name, zone) in all_upstreams {
+            assert_eq!(zone.servers.len(), NUM_SERVERS_PER_UPSTREAM);
+            assert_eq!(zone.total_requests(), (NUM_SERVERS_PER_UPSTREAM * NUM_REQUESTS_PER_SERVER) as u64);
+        }
+        
+        // Generate and verify Prometheus output
+        let formatter = PrometheusFormatter::new();
+        let prometheus_output = formatter.format_upstream_stats(all_upstreams);
+        
+        // Count number of request total metrics
+        let request_metrics_count = prometheus_output.matches("nginx_vts_upstream_requests_total{").count();
+        assert_eq!(request_metrics_count, NUM_UPSTREAMS * NUM_SERVERS_PER_UPSTREAM);
+    }
+
+    #[test] 
+    fn test_thread_safety_simulation() {
+        let manager: Arc<RwLock<VtsStatsManager>> = Arc::new(RwLock::new(VtsStatsManager::new()));
+        let mut handles = vec![];
+        
+        // Simulate concurrent access from multiple threads
+        for i in 0..10 {
+            let manager_clone = Arc::clone(&manager);
+            let handle = thread::spawn(move || {
+                let mut m = manager_clone.write().unwrap();
+                m.update_upstream_stats(
+                    "concurrent_test",
+                    &format!("server{}:80", i % 3), // 3 different servers
+                    100 + i * 10,
+                    50 + i * 5,
+                    1000,
+                    500,
+                    200,
+                );
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        // Verify all requests were recorded
+        let final_manager = manager.read().unwrap();
+        let zone = final_manager.get_upstream_zone("concurrent_test").unwrap();
+        
+        assert_eq!(zone.total_requests(), 10);
+        assert_eq!(zone.servers.len(), 3); // server0, server1, server2
     }
     
     #[test]
@@ -318,32 +391,6 @@ mod tests {
     }
     
     #[test]
-    fn test_cache_zone_management() {
-        let mut manager = VtsStatsManager::new();
-        
-        // Update cache statistics
-        manager.update_cache_stats(
-            "my_cache",
-            CacheStatus::Hit,
-            2048
-        );
-        
-        // Verify cache zone was created
-        let cache_zone = manager.get_cache_zone("my_cache").unwrap();
-        assert_eq!(cache_zone.name, "my_cache");
-        assert_eq!(cache_zone.responses.hit, 1);
-        assert_eq!(cache_zone.in_bytes, 2048);
-        assert_eq!(cache_zone.out_bytes, 0);
-        
-        // Update cache size
-        manager.update_cache_size("my_cache", 1048576, Some(10485760)); // 1MB used, 10MB max
-        
-        let cache_zone = manager.get_cache_zone("my_cache").unwrap();
-        assert_eq!(cache_zone.used_size, 1048576);
-        assert_eq!(cache_zone.max_size, 10485760);
-    }
-    
-    #[test]
     fn test_multiple_upstream_servers() {
         let mut manager = VtsStatsManager::new();
         
@@ -370,20 +417,4 @@ mod tests {
         assert_eq!(upstream_zone.total_requests(), 3);
     }
     
-    #[test]
-    fn test_cache_hit_ratio() {
-        let mut manager = VtsStatsManager::new();
-        
-        // Add cache hits and misses
-        manager.update_cache_stats("test_cache", CacheStatus::Hit, 1000);
-        manager.update_cache_stats("test_cache", CacheStatus::Hit, 1000);
-        manager.update_cache_stats("test_cache", CacheStatus::Hit, 1000);
-        manager.update_cache_stats("test_cache", CacheStatus::Miss, 500);
-        manager.update_cache_stats("test_cache", CacheStatus::Miss, 500);
-        
-        let cache_zone = manager.get_cache_zone("test_cache").unwrap();
-        assert_eq!(cache_zone.responses.hit, 3);
-        assert_eq!(cache_zone.responses.miss, 2);
-        assert_eq!(cache_zone.hit_ratio(), 60.0); // 3 hits out of 5 total = 60%
-    }
 }

@@ -6,13 +6,13 @@
 
 use std::collections::HashMap;
 use crate::upstream_stats::UpstreamZone;
-use crate::cache_stats::{CacheZoneStats};
 
 /// Prometheus metrics formatter for VTS statistics
 ///
 /// Formats various VTS statistics into Prometheus metrics format with
 /// proper metric names, labels, and help text according to Prometheus
 /// best practices.
+#[allow(dead_code)] // All fields used in formatting
 pub struct PrometheusFormatter {
     /// Optional metric prefix (default: "nginx_vts_")
     pub metric_prefix: String,
@@ -27,6 +27,7 @@ impl PrometheusFormatter {
     }
     
     /// Create a new Prometheus formatter with custom metric prefix
+    #[allow(dead_code)] // Used in tests and future integrations
     pub fn with_prefix(prefix: &str) -> Self {
         Self {
             metric_prefix: prefix.to_string(),
@@ -45,6 +46,7 @@ impl PrometheusFormatter {
     /// # Returns
     ///
     /// String containing formatted Prometheus metrics
+    #[allow(dead_code)] // Used in tests and VTS integration
     pub fn format_upstream_stats(&self, upstream_zones: &HashMap<String, UpstreamZone>) -> String {
         let mut output = String::new();
         
@@ -145,6 +147,7 @@ impl PrometheusFormatter {
     }
 
     /// Format upstream HTTP status code metrics
+    #[allow(dead_code)] // Used in format_upstream_stats method
     fn format_upstream_status_metrics(&self, output: &mut String, upstream_zones: &HashMap<String, UpstreamZone>) {
         output.push_str(&format!("# HELP {}upstream_responses_total Upstream responses by status code\n", self.metric_prefix));
         output.push_str(&format!("# TYPE {}upstream_responses_total counter\n", self.metric_prefix));
@@ -195,118 +198,6 @@ impl PrometheusFormatter {
         output.push('\n');
     }
 
-    /// Format cache zone statistics into Prometheus metrics
-    ///
-    /// Generates metrics for cache zones including hit ratios, cache size,
-    /// and cache response statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `cache_zones` - HashMap of cache zones with their statistics
-    ///
-    /// # Returns
-    ///
-    /// String containing formatted Prometheus cache metrics
-    pub fn format_cache_stats(&self, cache_zones: &HashMap<String, CacheZoneStats>) -> String {
-        let mut output = String::new();
-        
-        if cache_zones.is_empty() {
-            return output;
-        }
-
-        // nginx_vts_cache_size_bytes
-        output.push_str(&format!("# HELP {}cache_size_bytes Cache size in bytes\n", self.metric_prefix));
-        output.push_str(&format!("# TYPE {}cache_size_bytes gauge\n", self.metric_prefix));
-        
-        for (zone_name, cache_stats) in cache_zones {
-            // Maximum cache size
-            output.push_str(&format!(
-                "{}cache_size_bytes{{zone=\"{}\",type=\"max\"}} {}\n",
-                self.metric_prefix, zone_name, cache_stats.max_size
-            ));
-            
-            // Used cache size
-            output.push_str(&format!(
-                "{}cache_size_bytes{{zone=\"{}\",type=\"used\"}} {}\n",
-                self.metric_prefix, zone_name, cache_stats.used_size
-            ));
-        }
-        output.push('\n');
-
-        // nginx_vts_cache_hits_total
-        output.push_str(&format!("# HELP {}cache_hits_total Cache hit statistics\n", self.metric_prefix));
-        output.push_str(&format!("# TYPE {}cache_hits_total counter\n", self.metric_prefix));
-        
-        for (zone_name, cache_stats) in cache_zones {
-            let responses = &cache_stats.responses;
-            
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"hit\"}} {}\n",
-                self.metric_prefix, zone_name, responses.hit
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"miss\"}} {}\n",
-                self.metric_prefix, zone_name, responses.miss
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"bypass\"}} {}\n",
-                self.metric_prefix, zone_name, responses.bypass
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"expired\"}} {}\n",
-                self.metric_prefix, zone_name, responses.expired
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"stale\"}} {}\n",
-                self.metric_prefix, zone_name, responses.stale
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"updating\"}} {}\n",
-                self.metric_prefix, zone_name, responses.updating
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"revalidated\"}} {}\n",
-                self.metric_prefix, zone_name, responses.revalidated
-            ));
-            output.push_str(&format!(
-                "{}cache_hits_total{{zone=\"{}\",status=\"scarce\"}} {}\n",
-                self.metric_prefix, zone_name, responses.scarce
-            ));
-        }
-        output.push('\n');
-
-        output
-    }
-
-    /// Format complete VTS metrics including upstream and cache statistics
-    ///
-    /// # Arguments
-    ///
-    /// * `upstream_zones` - Upstream zones statistics
-    /// * `cache_zones` - Cache zones statistics
-    ///
-    /// # Returns
-    ///
-    /// String containing all formatted Prometheus metrics
-    pub fn format_all_stats(
-        &self,
-        upstream_zones: &HashMap<String, UpstreamZone>,
-        cache_zones: &HashMap<String, CacheZoneStats>,
-    ) -> String {
-        let mut output = String::new();
-        
-        // Add upstream metrics
-        if !upstream_zones.is_empty() {
-            output.push_str(&self.format_upstream_stats(upstream_zones));
-        }
-        
-        // Add cache metrics
-        if !cache_zones.is_empty() {
-            output.push_str(&self.format_cache_stats(cache_zones));
-        }
-        
-        output
-    }
 }
 
 impl Default for PrometheusFormatter {
@@ -319,7 +210,6 @@ impl Default for PrometheusFormatter {
 mod tests {
     use super::*;
     use crate::upstream_stats::{UpstreamZone, UpstreamServerStats};
-    use crate::cache_stats::CacheZoneStats;
 
     fn create_test_upstream_zone() -> UpstreamZone {
         let mut zone = UpstreamZone::new("test_backend");
@@ -349,19 +239,6 @@ mod tests {
         zone
     }
 
-    fn create_test_cache_zone() -> CacheZoneStats {
-        let mut cache = CacheZoneStats::new("test_cache", 1073741824); // 1GB max
-        cache.used_size = 536870912; // 512MB used
-        cache.in_bytes = 1000000; // 1MB read from cache
-        cache.out_bytes = 500000; // 500KB written to cache
-        
-        cache.responses.hit = 800;
-        cache.responses.miss = 150;
-        cache.responses.expired = 30;
-        cache.responses.bypass = 20;
-        
-        cache
-    }
 
     #[test]
     fn test_prometheus_formatter_creation() {
@@ -401,53 +278,30 @@ mod tests {
         assert!(output.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",server=\"10.0.0.1:80\",type=\"upstream_avg\"} 0.025000")); // 25ms avg -> 0.025s
     }
 
-    #[test]
-    fn test_format_cache_stats() {
-        let formatter = PrometheusFormatter::new();
-        let mut cache_zones = HashMap::new();
-        cache_zones.insert("test_cache".to_string(), create_test_cache_zone());
-        
-        let output = formatter.format_cache_stats(&cache_zones);
-        
-        // Verify cache size metrics
-        assert!(output.contains("# HELP nginx_vts_cache_size_bytes"));
-        assert!(output.contains("nginx_vts_cache_size_bytes{zone=\"test_cache\",type=\"max\"} 1073741824"));
-        assert!(output.contains("nginx_vts_cache_size_bytes{zone=\"test_cache\",type=\"used\"} 536870912"));
-        
-        // Verify cache hit metrics
-        assert!(output.contains("# HELP nginx_vts_cache_hits_total"));
-        assert!(output.contains("nginx_vts_cache_hits_total{zone=\"test_cache\",status=\"hit\"} 800"));
-        assert!(output.contains("nginx_vts_cache_hits_total{zone=\"test_cache\",status=\"miss\"} 150"));
-    }
 
     #[test]
     fn test_format_empty_stats() {
         let formatter = PrometheusFormatter::new();
         let empty_upstream: HashMap<String, UpstreamZone> = HashMap::new();
-        let empty_cache: HashMap<String, CacheZoneStats> = HashMap::new();
         
         let upstream_output = formatter.format_upstream_stats(&empty_upstream);
-        let cache_output = formatter.format_cache_stats(&empty_cache);
         
         assert!(upstream_output.is_empty());
-        assert!(cache_output.is_empty());
     }
 
     #[test]
-    fn test_format_all_stats() {
+    fn test_format_upstream_only() {
         let formatter = PrometheusFormatter::new();
         let mut upstream_zones = HashMap::new();
-        let mut cache_zones = HashMap::new();
         
         upstream_zones.insert("test_backend".to_string(), create_test_upstream_zone());
-        cache_zones.insert("test_cache".to_string(), create_test_cache_zone());
         
-        let output = formatter.format_all_stats(&upstream_zones, &cache_zones);
+        let output = formatter.format_upstream_stats(&upstream_zones);
         
-        // Should contain both upstream and cache metrics
+        // Should contain upstream metrics
         assert!(output.contains("nginx_vts_upstream_requests_total"));
-        assert!(output.contains("nginx_vts_cache_size_bytes"));
-        assert!(output.contains("nginx_vts_cache_hits_total"));
+        assert!(output.contains("nginx_vts_upstream_bytes_total"));
+        assert!(output.contains("nginx_vts_upstream_response_seconds"));
     }
 
     #[test]

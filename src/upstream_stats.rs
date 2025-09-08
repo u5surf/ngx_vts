@@ -29,6 +29,7 @@ pub struct VtsResponseStats {
 /// Contains comprehensive metrics about a specific upstream server including
 /// request/response data, timing information, and nginx configuration status.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Some fields are for future nginx integration
 pub struct UpstreamServerStats {
     /// Server address in format "host:port" (e.g., "10.10.10.11:80")
     pub server: String,
@@ -78,6 +79,7 @@ pub struct UpstreamServerStats {
 /// Contains all server statistics for a named upstream group,
 /// allowing tracking of multiple servers within the same upstream block.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Some fields are for future nginx integration
 pub struct UpstreamZone {
     /// Name of the upstream group (from nginx configuration)
     pub name: String,
@@ -156,6 +158,7 @@ impl UpstreamServerStats {
     /// # Returns
     ///
     /// Average request time in milliseconds, or 0.0 if no requests recorded
+    #[allow(dead_code)] // Used in prometheus formatter
     pub fn avg_request_time(&self) -> f64 {
         if self.request_time_counter > 0 {
             self.request_time_total as f64 / self.request_time_counter as f64
@@ -169,6 +172,7 @@ impl UpstreamServerStats {
     /// # Returns
     ///
     /// Average response time in milliseconds, or 0.0 if no responses recorded
+    #[allow(dead_code)] // Used in prometheus formatter
     pub fn avg_response_time(&self) -> f64 {
         if self.response_time_counter > 0 {
             self.response_time_total as f64 / self.response_time_counter as f64
@@ -215,6 +219,7 @@ impl UpstreamZone {
     /// # Returns
     ///
     /// Sum of request counters from all servers
+    #[allow(dead_code)] // Used in tests and future integrations
     pub fn total_requests(&self) -> u64 {
         self.servers.values().map(|s| s.request_counter).sum()
     }
@@ -224,6 +229,7 @@ impl UpstreamZone {
     /// # Returns
     ///
     /// Tuple of (total_in_bytes, total_out_bytes)
+    #[allow(dead_code)] // Used in tests and future integrations
     pub fn total_bytes(&self) -> (u64, u64) {
         let total_in = self.servers.values().map(|s| s.in_bytes).sum();
         let total_out = self.servers.values().map(|s| s.out_bytes).sum();
@@ -430,6 +436,7 @@ mod tests {
 ///
 /// Provides functionality to collect upstream statistics during nginx request processing
 /// by hooking into the log phase and extracting information from nginx variables.
+#[allow(dead_code)] // Used in nginx integration functions
 pub struct UpstreamStatsCollector {
     /// Upstream zones storage (thread-safe)
     upstream_zones: Arc<RwLock<HashMap<String, UpstreamZone>>>,
@@ -458,6 +465,7 @@ impl UpstreamStatsCollector {
     /// * `bytes_sent` - Bytes sent to upstream
     /// * `bytes_received` - Bytes received from upstream
     /// * `status_code` - HTTP status code from upstream
+    #[allow(dead_code)] // For future nginx integration
     pub fn log_upstream_request(
         &self,
         upstream_name: &str,
@@ -494,12 +502,14 @@ impl UpstreamStatsCollector {
     }
 
     /// Get upstream zone statistics (read-only access)
+    #[allow(dead_code)] // For future nginx integration
     pub fn get_upstream_zone(&self, upstream_name: &str) -> Option<UpstreamZone> {
         let zones = self.upstream_zones.read().ok()?;
         zones.get(upstream_name).cloned()
     }
 
     /// Get all upstream zones (read-only access)
+    #[allow(dead_code)] // For future nginx integration
     pub fn get_all_upstream_zones(&self) -> Result<HashMap<String, UpstreamZone>, &'static str> {
         let zones = self.upstream_zones.read()
             .map_err(|_| "Failed to acquire read lock on upstream zones")?;
@@ -507,6 +517,7 @@ impl UpstreamStatsCollector {
     }
 
     /// Reset all upstream statistics
+    #[allow(dead_code)] // For future nginx integration
     pub fn reset_statistics(&self) -> Result<(), &'static str> {
         let mut zones = self.upstream_zones.write()
             .map_err(|_| "Failed to acquire write lock on upstream zones")?;
@@ -522,7 +533,9 @@ impl Default for UpstreamStatsCollector {
 }
 
 // Global instance of the upstream statistics collector
+#[allow(dead_code)] // For future nginx integration
 static mut UPSTREAM_STATS_COLLECTOR: Option<UpstreamStatsCollector> = None;
+#[allow(dead_code)] // For future nginx integration
 static mut UPSTREAM_STATS_INITIALIZED: bool = false;
 
 /// Initialize the global upstream statistics collector
@@ -531,6 +544,7 @@ static mut UPSTREAM_STATS_INITIALIZED: bool = false;
 ///
 /// This function should be called once during nginx module initialization.
 /// It's marked unsafe because it modifies global static variables.
+#[allow(dead_code)] // For future nginx integration
 pub unsafe fn init_upstream_stats_collector() {
     if !UPSTREAM_STATS_INITIALIZED {
         UPSTREAM_STATS_COLLECTOR = Some(UpstreamStatsCollector::new());
@@ -544,8 +558,9 @@ pub unsafe fn init_upstream_stats_collector() {
 ///
 /// This function is unsafe because it accesses global static variables.
 /// The caller must ensure that init_upstream_stats_collector() has been called first.
+#[allow(dead_code)] // For future nginx integration
 pub unsafe fn get_upstream_stats_collector() -> Option<&'static UpstreamStatsCollector> {
-    UPSTREAM_STATS_COLLECTOR.as_ref()
+    unsafe { &*(&raw const UPSTREAM_STATS_COLLECTOR) }.as_ref()
 }
 
 /// Extract nginx variable as string
@@ -554,6 +569,7 @@ pub unsafe fn get_upstream_stats_collector() -> Option<&'static UpstreamStatsCol
 ///
 /// This function is unsafe because it works with raw nginx pointers.
 /// The caller must ensure that the request pointer is valid.
+#[allow(dead_code)] // For future nginx integration
 unsafe fn get_nginx_variable(r: *mut ngx_http_request_t, name: &str) -> Option<String> {
     if r.is_null() {
         return None;
@@ -578,6 +594,7 @@ unsafe fn get_nginx_variable(r: *mut ngx_http_request_t, name: &str) -> Option<S
 /// # Safety
 ///
 /// This function is unsafe because it's called by nginx and works with raw pointers.
+#[allow(dead_code)] // For future nginx integration
 pub unsafe extern "C" fn upstream_log_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     if r.is_null() {
         return NGX_ERROR as ngx_int_t;
@@ -624,6 +641,7 @@ pub unsafe extern "C" fn upstream_log_handler(r: *mut ngx_http_request_t) -> ngx
 /// # Safety
 ///
 /// This function is unsafe because it modifies nginx's configuration structures.
+#[allow(dead_code)] // For future nginx integration
 pub unsafe fn register_upstream_hooks() -> Result<(), &'static str> {
     // Initialize the global collector
     init_upstream_stats_collector();

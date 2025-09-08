@@ -210,7 +210,7 @@ impl VtsStatsManager {
             let mut name = ngx_string!("vts_stats_zone");
             let size = 1024 * 1024; // 1MB shared memory
 
-            let shm_zone = ngx_shared_memory_add(cf, &mut name, size, &crate::ngx_http_vts_module as *const _ as *mut _);
+            let shm_zone = ngx_shared_memory_add(cf, &mut name, size, &raw const crate::ngx_http_vts_module as *const _ as *mut _);
             if shm_zone.is_null() {
                 return Err("Failed to allocate shared memory zone");
             }
