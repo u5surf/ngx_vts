@@ -4,9 +4,9 @@
 //! using nginx's shared memory and red-black tree data structures, similar to the original
 //! nginx-module-vts implementation.
 
+use crate::upstream_stats::UpstreamZone;
 use ngx::ffi::*;
 use std::collections::HashMap;
-use crate::upstream_stats::UpstreamZone;
 
 /// VTS Node statistics data structure
 ///
@@ -121,7 +121,7 @@ impl Default for VtsNodeStats {
 pub struct VtsStatsManager {
     /// In-memory server zone statistics storage (temporary implementation)
     pub stats: HashMap<String, VtsNodeStats>,
-    
+
     /// Upstream zones statistics storage
     pub upstream_zones: HashMap<String, UpstreamZone>,
 }
@@ -175,20 +175,21 @@ impl VtsStatsManager {
         bytes_received: u64,
         status_code: u16,
     ) {
-        let upstream_zone = self.upstream_zones
+        let upstream_zone = self
+            .upstream_zones
             .entry(upstream_name.to_string())
             .or_insert_with(|| UpstreamZone::new(upstream_name));
 
         let server_stats = upstream_zone.get_or_create_server(upstream_addr);
-        
+
         // Update counters
         server_stats.request_counter += 1;
         server_stats.in_bytes += bytes_received;
         server_stats.out_bytes += bytes_sent;
-        
+
         // Update response status
         server_stats.update_response_status(status_code);
-        
+
         // Update timing
         server_stats.update_timing(request_time, upstream_response_time);
     }
@@ -214,7 +215,6 @@ impl VtsStatsManager {
             .entry(upstream_name.to_string())
             .or_insert_with(|| UpstreamZone::new(upstream_name))
     }
-
 }
 
 impl Default for VtsStatsManager {
@@ -229,7 +229,7 @@ mod tests {
     use crate::prometheus::PrometheusFormatter;
     use std::sync::{Arc, RwLock};
     use std::thread;
-    
+
     #[test]
     fn test_vts_stats_manager_initialization() {
         let manager = VtsStatsManager::new();
@@ -240,40 +240,50 @@ mod tests {
     #[test]
     fn test_complete_upstream_pipeline() {
         let mut manager = VtsStatsManager::new();
-        
+
         // Simulate realistic traffic to multiple upstreams
         let upstreams_data = [
             ("web_backend", "192.168.1.10:80", 120, 60, 1500, 800, 200),
             ("web_backend", "192.168.1.11:80", 180, 90, 2000, 1000, 200),
             ("web_backend", "192.168.1.10:80", 250, 120, 1200, 600, 404),
             ("api_backend", "192.168.2.10:8080", 80, 40, 800, 400, 200),
-            ("api_backend", "192.168.2.11:8080", 300, 200, 3000, 1500, 500),
+            (
+                "api_backend",
+                "192.168.2.11:8080",
+                300,
+                200,
+                3000,
+                1500,
+                500,
+            ),
         ];
-        
+
         for (upstream, server, req_time, resp_time, sent, recv, status) in upstreams_data.iter() {
-            manager.update_upstream_stats(upstream, server, *req_time, *resp_time, *sent, *recv, *status);
+            manager.update_upstream_stats(
+                upstream, server, *req_time, *resp_time, *sent, *recv, *status,
+            );
         }
-        
+
         // Verify data collection
         let web_backend = manager.get_upstream_zone("web_backend").unwrap();
         assert_eq!(web_backend.servers.len(), 2);
         assert_eq!(web_backend.total_requests(), 3);
-        
+
         let api_backend = manager.get_upstream_zone("api_backend").unwrap();
         assert_eq!(api_backend.servers.len(), 2);
         assert_eq!(api_backend.total_requests(), 2);
-        
+
         // Generate Prometheus metrics
         let formatter = PrometheusFormatter::new();
         let all_upstreams = manager.get_all_upstream_zones();
         let prometheus_output = formatter.format_upstream_stats(all_upstreams);
-        
+
         // Verify Prometheus output contains expected metrics
         assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.10:80\"} 2"));
         assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.11:80\"} 1"));
         assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.10:8080\"} 1"));
         assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.11:8080\"} 1"));
-        
+
         // Verify status code metrics
         assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"2xx\"} 1"));
         assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"4xx\"} 1"));
@@ -283,17 +293,17 @@ mod tests {
     #[test]
     fn test_memory_efficiency_large_dataset() {
         let mut manager = VtsStatsManager::new();
-        
+
         const NUM_UPSTREAMS: usize = 5;
         const NUM_SERVERS_PER_UPSTREAM: usize = 3;
         const NUM_REQUESTS_PER_SERVER: usize = 50;
-        
+
         for upstream_id in 0..NUM_UPSTREAMS {
             let upstream_name = format!("backend_{}", upstream_id);
-            
+
             for server_id in 0..NUM_SERVERS_PER_UPSTREAM {
                 let server_addr = format!("10.0.{}.{}:8080", upstream_id, server_id);
-                
+
                 for request_id in 0..NUM_REQUESTS_PER_SERVER {
                     manager.update_upstream_stats(
                         &upstream_name,
@@ -307,30 +317,38 @@ mod tests {
                 }
             }
         }
-        
+
         // Verify all data was collected correctly
         let all_upstreams = manager.get_all_upstream_zones();
         assert_eq!(all_upstreams.len(), NUM_UPSTREAMS);
-        
+
         for (_upstream_name, zone) in all_upstreams {
             assert_eq!(zone.servers.len(), NUM_SERVERS_PER_UPSTREAM);
-            assert_eq!(zone.total_requests(), (NUM_SERVERS_PER_UPSTREAM * NUM_REQUESTS_PER_SERVER) as u64);
+            assert_eq!(
+                zone.total_requests(),
+                (NUM_SERVERS_PER_UPSTREAM * NUM_REQUESTS_PER_SERVER) as u64
+            );
         }
-        
+
         // Generate and verify Prometheus output
         let formatter = PrometheusFormatter::new();
         let prometheus_output = formatter.format_upstream_stats(all_upstreams);
-        
+
         // Count number of request total metrics
-        let request_metrics_count = prometheus_output.matches("nginx_vts_upstream_requests_total{").count();
-        assert_eq!(request_metrics_count, NUM_UPSTREAMS * NUM_SERVERS_PER_UPSTREAM);
+        let request_metrics_count = prometheus_output
+            .matches("nginx_vts_upstream_requests_total{")
+            .count();
+        assert_eq!(
+            request_metrics_count,
+            NUM_UPSTREAMS * NUM_SERVERS_PER_UPSTREAM
+        );
     }
 
-    #[test] 
+    #[test]
     fn test_thread_safety_simulation() {
         let manager: Arc<RwLock<VtsStatsManager>> = Arc::new(RwLock::new(VtsStatsManager::new()));
         let mut handles = vec![];
-        
+
         // Simulate concurrent access from multiple threads
         for i in 0..10 {
             let manager_clone = Arc::clone(&manager);
@@ -348,40 +366,40 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         // Verify all requests were recorded
         let final_manager = manager.read().unwrap();
         let zone = final_manager.get_upstream_zone("concurrent_test").unwrap();
-        
+
         assert_eq!(zone.total_requests(), 10);
         assert_eq!(zone.servers.len(), 3); // server0, server1, server2
     }
-    
+
     #[test]
     fn test_upstream_zone_management() {
         let mut manager = VtsStatsManager::new();
-        
+
         // Update upstream statistics
         manager.update_upstream_stats(
             "backend",
             "10.0.0.1:80",
-            100, // request_time
-            50,  // upstream_response_time
+            100,  // request_time
+            50,   // upstream_response_time
             1024, // bytes_sent
             512,  // bytes_received
-            200   // status_code
+            200,  // status_code
         );
-        
+
         // Verify upstream zone was created
         let upstream_zone = manager.get_upstream_zone("backend").unwrap();
         assert_eq!(upstream_zone.name, "backend");
         assert_eq!(upstream_zone.servers.len(), 1);
-        
+
         // Verify server statistics
         let server_stats = upstream_zone.servers.get("10.0.0.1:80").unwrap();
         assert_eq!(server_stats.request_counter, 1);
@@ -389,32 +407,31 @@ mod tests {
         assert_eq!(server_stats.out_bytes, 1024);
         assert_eq!(server_stats.responses.status_2xx, 1);
     }
-    
+
     #[test]
     fn test_multiple_upstream_servers() {
         let mut manager = VtsStatsManager::new();
-        
+
         // Add stats for multiple servers in the same upstream
         manager.update_upstream_stats("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200);
         manager.update_upstream_stats("backend", "10.0.0.2:80", 150, 75, 1500, 750, 200);
         manager.update_upstream_stats("backend", "10.0.0.1:80", 120, 60, 1200, 600, 404);
-        
+
         let upstream_zone = manager.get_upstream_zone("backend").unwrap();
         assert_eq!(upstream_zone.servers.len(), 2);
-        
+
         // Check first server (2 requests)
         let server1 = upstream_zone.servers.get("10.0.0.1:80").unwrap();
         assert_eq!(server1.request_counter, 2);
         assert_eq!(server1.responses.status_2xx, 1);
         assert_eq!(server1.responses.status_4xx, 1);
-        
+
         // Check second server (1 request)
         let server2 = upstream_zone.servers.get("10.0.0.2:80").unwrap();
         assert_eq!(server2.request_counter, 1);
         assert_eq!(server2.responses.status_2xx, 1);
-        
+
         // Check total requests
         assert_eq!(upstream_zone.total_requests(), 3);
     }
-    
 }

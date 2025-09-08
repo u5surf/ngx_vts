@@ -11,10 +11,10 @@ use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 
 mod config;
-mod vts_node;
-mod upstream_stats;
-mod stats;
 mod prometheus;
+mod stats;
+mod upstream_stats;
+mod vts_node;
 
 /// VTS shared memory context structure
 ///

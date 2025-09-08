@@ -1,5 +1,5 @@
 //! Statistics collection and management for VTS module
-//! 
+//!
 //! This module is currently unused but prepared for future implementation
 
 #![allow(dead_code, unused_imports)]
@@ -7,9 +7,9 @@
 use ngx::ffi::*;
 use ngx::{core, http, ngx_string};
 use std::collections::HashMap;
+use std::os::raw::c_void;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::os::raw::c_void;
 // Note: chrono removed as it's not in Cargo.toml dependencies
 
 #[derive(Debug, Clone)]
@@ -144,7 +144,13 @@ impl VtsServerStats {
             .as_secs()
     }
 
-    pub fn update_request(&mut self, status: u16, bytes_in: u64, bytes_out: u64, request_time: f64) {
+    pub fn update_request(
+        &mut self,
+        status: u16,
+        bytes_in: u64,
+        bytes_out: u64,
+        request_time: f64,
+    ) {
         self.requests += 1;
         self.bytes_in += bytes_in;
         self.bytes_out += bytes_out;
@@ -210,7 +216,12 @@ impl VtsStatsManager {
             let mut name = ngx_string!("vts_stats_zone");
             let size = 1024 * 1024; // 1MB shared memory
 
-            let shm_zone = ngx_shared_memory_add(cf, &mut name, size, &raw const crate::ngx_http_vts_module as *const _ as *mut _);
+            let shm_zone = ngx_shared_memory_add(
+                cf,
+                &mut name,
+                size,
+                &raw const crate::ngx_http_vts_module as *const _ as *mut _,
+            );
             if shm_zone.is_null() {
                 return Err("Failed to allocate shared memory zone");
             }
@@ -231,11 +242,12 @@ impl VtsStatsManager {
         request_time: f64,
     ) {
         let mut stats = self.stats.write().unwrap();
-        
-        let server_stats = stats.server_zones
+
+        let server_stats = stats
+            .server_zones
             .entry(server_name.to_string())
             .or_insert_with(VtsServerStats::default);
-        
+
         server_stats.update_request(status, bytes_in, bytes_out, request_time);
     }
 

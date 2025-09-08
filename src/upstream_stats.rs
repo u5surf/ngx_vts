@@ -4,9 +4,9 @@
 //! and managing upstream server statistics including request counts,
 //! byte transfers, response times, and server status information.
 
+use ngx::ffi::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use ngx::ffi::*;
 // Note: core is imported but used in commented-out nginx integration functions
 
 /// Response statistics structure (reused from stats.rs design)
@@ -33,43 +33,43 @@ pub struct VtsResponseStats {
 pub struct UpstreamServerStats {
     /// Server address in format "host:port" (e.g., "10.10.10.11:80")
     pub server: String,
-    
+
     /// Total number of requests sent to this server
     pub request_counter: u64,
-    
+
     /// Total bytes received from this server
     pub in_bytes: u64,
-    
+
     /// Total bytes sent to this server
     pub out_bytes: u64,
-    
+
     /// Response status code statistics (reusing existing structure)
     pub responses: VtsResponseStats,
-    
+
     /// Total request processing time in milliseconds
     pub request_time_total: u64,
-    
+
     /// Counter for request time measurements (for average calculation)
     pub request_time_counter: u64,
-    
+
     /// Total upstream response time in milliseconds
     pub response_time_total: u64,
-    
+
     /// Counter for response time measurements (for average calculation)
     pub response_time_counter: u64,
-    
+
     /// Server weight from nginx configuration
     pub weight: u32,
-    
+
     /// Max fails setting from nginx configuration
     pub max_fails: u32,
-    
+
     /// Fail timeout setting in seconds from nginx configuration
     pub fail_timeout: u32,
-    
+
     /// Whether this server is marked as backup
     pub backup: bool,
-    
+
     /// Whether this server is currently marked as down
     pub down: bool,
 }
@@ -83,7 +83,7 @@ pub struct UpstreamServerStats {
 pub struct UpstreamZone {
     /// Name of the upstream group (from nginx configuration)
     pub name: String,
-    
+
     /// Map of server address to its statistics
     /// Key: server address (e.g., "10.10.10.11:80")
     /// Value: statistics for that server
@@ -118,7 +118,7 @@ impl UpstreamServerStats {
             down: false,
         }
     }
-    
+
     /// Update response status statistics
     ///
     /// # Arguments
@@ -134,7 +134,7 @@ impl UpstreamServerStats {
             _ => {}
         }
     }
-    
+
     /// Update timing statistics
     ///
     /// # Arguments
@@ -146,13 +146,13 @@ impl UpstreamServerStats {
             self.request_time_total += request_time;
             self.request_time_counter += 1;
         }
-        
+
         if upstream_response_time > 0 {
             self.response_time_total += upstream_response_time;
             self.response_time_counter += 1;
         }
     }
-    
+
     /// Get average request processing time
     ///
     /// # Returns
@@ -166,7 +166,7 @@ impl UpstreamServerStats {
             0.0
         }
     }
-    
+
     /// Get average upstream response time
     ///
     /// # Returns
@@ -198,7 +198,7 @@ impl UpstreamZone {
             servers: HashMap::new(),
         }
     }
-    
+
     /// Get or create server statistics entry
     ///
     /// # Arguments
@@ -213,7 +213,7 @@ impl UpstreamZone {
             .entry(server_addr.to_string())
             .or_insert_with(|| UpstreamServerStats::new(server_addr))
     }
-    
+
     /// Get total request count for all servers in this upstream
     ///
     /// # Returns
@@ -223,7 +223,7 @@ impl UpstreamZone {
     pub fn total_requests(&self) -> u64 {
         self.servers.values().map(|s| s.request_counter).sum()
     }
-    
+
     /// Get total bytes transferred (in + out) for all servers
     ///
     /// # Returns
@@ -240,7 +240,7 @@ impl UpstreamZone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_upstream_server_stats_new() {
         let stats = UpstreamServerStats::new("192.168.1.1:80");
@@ -252,87 +252,87 @@ mod tests {
         assert!(!stats.backup);
         assert!(!stats.down);
     }
-    
+
     #[test]
     fn test_update_response_status() {
         let mut stats = UpstreamServerStats::new("test:80");
-        
+
         stats.update_response_status(200);
         stats.update_response_status(404);
         stats.update_response_status(500);
-        
+
         assert_eq!(stats.responses.status_2xx, 1);
         assert_eq!(stats.responses.status_4xx, 1);
         assert_eq!(stats.responses.status_5xx, 1);
     }
-    
+
     #[test]
     fn test_update_timing() {
         let mut stats = UpstreamServerStats::new("test:80");
-        
+
         stats.update_timing(100, 50);
         stats.update_timing(200, 75);
-        
+
         assert_eq!(stats.request_time_total, 300);
         assert_eq!(stats.request_time_counter, 2);
         assert_eq!(stats.response_time_total, 125);
         assert_eq!(stats.response_time_counter, 2);
-        
+
         assert_eq!(stats.avg_request_time(), 150.0);
         assert_eq!(stats.avg_response_time(), 62.5);
     }
-    
+
     #[test]
     fn test_upstream_zone() {
         let mut zone = UpstreamZone::new("backend");
         assert_eq!(zone.name, "backend");
         assert!(zone.servers.is_empty());
-        
+
         let server1 = zone.get_or_create_server("10.0.0.1:80");
         server1.request_counter = 100;
         server1.in_bytes = 1000;
         server1.out_bytes = 500;
-        
+
         let server2 = zone.get_or_create_server("10.0.0.2:80");
         server2.request_counter = 200;
         server2.in_bytes = 2000;
         server2.out_bytes = 1000;
-        
+
         assert_eq!(zone.total_requests(), 300);
         assert_eq!(zone.total_bytes(), (3000, 1500));
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_creation() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Should start with empty zones
         let zones = collector.get_all_upstream_zones().unwrap();
         assert!(zones.is_empty());
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_log_request() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Log a request
         let result = collector.log_upstream_request(
             "backend",
             "10.0.0.1:80",
-            100, // request_time
-            50,  // upstream_response_time
+            100,  // request_time
+            50,   // upstream_response_time
             1024, // bytes_sent
             2048, // bytes_received
-            200   // status_code
+            200,  // status_code
         );
-        
+
         assert!(result.is_ok());
-        
+
         // Verify the zone was created
         let zone = collector.get_upstream_zone("backend").unwrap();
         assert_eq!(zone.name, "backend");
         assert_eq!(zone.servers.len(), 1);
-        
+
         // Verify server statistics
         let server_stats = zone.servers.get("10.0.0.1:80").unwrap();
         assert_eq!(server_stats.request_counter, 1);
@@ -340,92 +340,110 @@ mod tests {
         assert_eq!(server_stats.out_bytes, 1024);
         assert_eq!(server_stats.responses.status_2xx, 1);
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_multiple_requests() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Log multiple requests to different servers
-        collector.log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200).unwrap();
-        collector.log_upstream_request("backend", "10.0.0.2:80", 150, 75, 1500, 750, 200).unwrap();
-        collector.log_upstream_request("backend", "10.0.0.1:80", 120, 60, 1200, 600, 404).unwrap();
-        
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .unwrap();
+        collector
+            .log_upstream_request("backend", "10.0.0.2:80", 150, 75, 1500, 750, 200)
+            .unwrap();
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 120, 60, 1200, 600, 404)
+            .unwrap();
+
         let zone = collector.get_upstream_zone("backend").unwrap();
         assert_eq!(zone.servers.len(), 2);
-        
+
         // Check first server (2 requests)
         let server1 = zone.servers.get("10.0.0.1:80").unwrap();
         assert_eq!(server1.request_counter, 2);
         assert_eq!(server1.responses.status_2xx, 1);
         assert_eq!(server1.responses.status_4xx, 1);
-        
+
         // Check second server (1 request)
         let server2 = zone.servers.get("10.0.0.2:80").unwrap();
         assert_eq!(server2.request_counter, 1);
         assert_eq!(server2.responses.status_2xx, 1);
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_multiple_upstreams() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Log requests to different upstreams
-        collector.log_upstream_request("backend1", "10.0.0.1:80", 100, 50, 1000, 500, 200).unwrap();
-        collector.log_upstream_request("backend2", "10.0.0.2:80", 150, 75, 1500, 750, 200).unwrap();
-        
+        collector
+            .log_upstream_request("backend1", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .unwrap();
+        collector
+            .log_upstream_request("backend2", "10.0.0.2:80", 150, 75, 1500, 750, 200)
+            .unwrap();
+
         let zones = collector.get_all_upstream_zones().unwrap();
         assert_eq!(zones.len(), 2);
         assert!(zones.contains_key("backend1"));
         assert!(zones.contains_key("backend2"));
-        
+
         // Verify each upstream has its own statistics
         let backend1 = collector.get_upstream_zone("backend1").unwrap();
         let backend2 = collector.get_upstream_zone("backend2").unwrap();
-        
+
         assert_eq!(backend1.servers.len(), 1);
         assert_eq!(backend2.servers.len(), 1);
         assert!(backend1.servers.contains_key("10.0.0.1:80"));
         assert!(backend2.servers.contains_key("10.0.0.2:80"));
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_reset() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Add some statistics
-        collector.log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200).unwrap();
-        
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .unwrap();
+
         // Verify data exists
         let zones_before = collector.get_all_upstream_zones().unwrap();
         assert_eq!(zones_before.len(), 1);
-        
+
         // Reset statistics
         let result = collector.reset_statistics();
         assert!(result.is_ok());
-        
+
         // Verify data is cleared
         let zones_after = collector.get_all_upstream_zones().unwrap();
         assert!(zones_after.is_empty());
     }
-    
+
     #[test]
     fn test_upstream_stats_collector_timing_aggregation() {
         let collector = UpstreamStatsCollector::new();
-        
+
         // Log requests with different timing
-        collector.log_upstream_request("backend", "10.0.0.1:80", 100, 40, 1000, 500, 200).unwrap();
-        collector.log_upstream_request("backend", "10.0.0.1:80", 200, 80, 1500, 750, 200).unwrap();
-        collector.log_upstream_request("backend", "10.0.0.1:80", 150, 60, 1200, 600, 200).unwrap();
-        
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 100, 40, 1000, 500, 200)
+            .unwrap();
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 200, 80, 1500, 750, 200)
+            .unwrap();
+        collector
+            .log_upstream_request("backend", "10.0.0.1:80", 150, 60, 1200, 600, 200)
+            .unwrap();
+
         let zone = collector.get_upstream_zone("backend").unwrap();
         let server = zone.servers.get("10.0.0.1:80").unwrap();
-        
+
         assert_eq!(server.request_counter, 3);
         assert_eq!(server.request_time_total, 450); // 100 + 200 + 150
         assert_eq!(server.response_time_total, 180); // 40 + 80 + 60
         assert_eq!(server.request_time_counter, 3);
         assert_eq!(server.response_time_counter, 3);
-        
+
         // Test average calculations
         assert_eq!(server.avg_request_time(), 150.0); // 450 / 3
         assert_eq!(server.avg_response_time(), 60.0); // 180 / 3
@@ -449,7 +467,7 @@ impl UpstreamStatsCollector {
             upstream_zones: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Log upstream request statistics
     ///
     /// This method should be called from nginx log phase to record upstream statistics.
@@ -476,7 +494,9 @@ impl UpstreamStatsCollector {
         bytes_received: u64,
         status_code: u16,
     ) -> Result<(), &'static str> {
-        let mut zones = self.upstream_zones.write()
+        let mut zones = self
+            .upstream_zones
+            .write()
             .map_err(|_| "Failed to acquire write lock on upstream zones")?;
 
         // Get or create upstream zone
@@ -486,15 +506,15 @@ impl UpstreamStatsCollector {
 
         // Get or create server statistics
         let server_stats = upstream_zone.get_or_create_server(upstream_addr);
-        
+
         // Update statistics
         server_stats.request_counter += 1;
         server_stats.in_bytes += bytes_received;
         server_stats.out_bytes += bytes_sent;
-        
+
         // Update response status
         server_stats.update_response_status(status_code);
-        
+
         // Update timing information
         server_stats.update_timing(request_time, upstream_response_time);
 
@@ -511,7 +531,9 @@ impl UpstreamStatsCollector {
     /// Get all upstream zones (read-only access)
     #[allow(dead_code)] // For future nginx integration
     pub fn get_all_upstream_zones(&self) -> Result<HashMap<String, UpstreamZone>, &'static str> {
-        let zones = self.upstream_zones.read()
+        let zones = self
+            .upstream_zones
+            .read()
             .map_err(|_| "Failed to acquire read lock on upstream zones")?;
         Ok(zones.clone())
     }
@@ -519,7 +541,9 @@ impl UpstreamStatsCollector {
     /// Reset all upstream statistics
     #[allow(dead_code)] // For future nginx integration
     pub fn reset_statistics(&self) -> Result<(), &'static str> {
-        let mut zones = self.upstream_zones.write()
+        let mut zones = self
+            .upstream_zones
+            .write()
             .map_err(|_| "Failed to acquire write lock on upstream zones")?;
         zones.clear();
         Ok(())
@@ -578,7 +602,7 @@ unsafe fn get_nginx_variable(r: *mut ngx_http_request_t, name: &str) -> Option<S
     // Create nginx string from name
     let name_len = name.len();
     let name_ptr = name.as_ptr();
-    
+
     // This is a simplified version - real implementation would use nginx's
     // variable lookup mechanisms
     // For now, return None as placeholder
@@ -607,9 +631,11 @@ pub unsafe extern "C" fn upstream_log_handler(r: *mut ngx_http_request_t) -> ngx
     };
 
     // Extract nginx variables (placeholder implementation)
-    let upstream_name = get_nginx_variable(r, "upstream_name").unwrap_or_else(|| "default".to_string());
-    let upstream_addr = get_nginx_variable(r, "upstream_addr").unwrap_or_else(|| "unknown".to_string());
-    
+    let upstream_name =
+        get_nginx_variable(r, "upstream_name").unwrap_or_else(|| "default".to_string());
+    let upstream_addr =
+        get_nginx_variable(r, "upstream_addr").unwrap_or_else(|| "unknown".to_string());
+
     // Extract timing and status information
     // In a real implementation, these would come from nginx variables
     let request_time = 100; // Placeholder
@@ -648,6 +674,6 @@ pub unsafe fn register_upstream_hooks() -> Result<(), &'static str> {
 
     // In a real implementation, this would register the log handler with nginx
     // For now, this is a placeholder
-    
+
     Ok(())
 }
