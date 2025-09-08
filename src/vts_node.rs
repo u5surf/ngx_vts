@@ -165,6 +165,7 @@ impl VtsStatsManager {
     // --- Upstream Zone Management ---
 
     /// Update upstream statistics
+    #[allow(clippy::too_many_arguments)] // Matches nginx API requirements
     pub fn update_upstream_stats(
         &mut self,
         upstream_name: &str,
@@ -322,7 +323,7 @@ mod tests {
         let all_upstreams = manager.get_all_upstream_zones();
         assert_eq!(all_upstreams.len(), NUM_UPSTREAMS);
 
-        for (_upstream_name, zone) in all_upstreams {
+        for zone in all_upstreams.values() {
             assert_eq!(zone.servers.len(), NUM_SERVERS_PER_UPSTREAM);
             assert_eq!(
                 zone.total_requests(),

@@ -22,7 +22,7 @@ pub struct VtsServerStats {
     pub last_updated: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VtsResponseStats {
     pub status_1xx: u64,
     pub status_2xx: u64,
@@ -64,7 +64,7 @@ pub struct VtsCacheStats {
     pub scarce: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VtsConnectionStats {
     pub active: u64,
     pub reading: u64,
@@ -100,18 +100,6 @@ impl Default for VtsServerStats {
     }
 }
 
-impl Default for VtsResponseStats {
-    fn default() -> Self {
-        VtsResponseStats {
-            status_1xx: 0,
-            status_2xx: 0,
-            status_3xx: 0,
-            status_4xx: 0,
-            status_5xx: 0,
-        }
-    }
-}
-
 impl Default for VtsRequestTimes {
     fn default() -> Self {
         VtsRequestTimes {
@@ -119,19 +107,6 @@ impl Default for VtsRequestTimes {
             min: 0.0,
             max: 0.0,
             avg: 0.0,
-        }
-    }
-}
-
-impl Default for VtsConnectionStats {
-    fn default() -> Self {
-        VtsConnectionStats {
-            active: 0,
-            reading: 0,
-            writing: 0,
-            waiting: 0,
-            accepted: 0,
-            handled: 0,
         }
     }
 }
@@ -246,7 +221,7 @@ impl VtsStatsManager {
         let server_stats = stats
             .server_zones
             .entry(server_name.to_string())
-            .or_insert_with(VtsServerStats::default);
+            .or_default();
 
         server_stats.update_request(status, bytes_in, bytes_out, request_time);
     }

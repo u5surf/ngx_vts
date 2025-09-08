@@ -238,6 +238,7 @@ impl UpstreamZone {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // Large refactor needed to move, allow for now
 mod tests {
     use super::*;
 
@@ -316,7 +317,7 @@ mod tests {
         let collector = UpstreamStatsCollector::new();
 
         // Log a request
-        let result = collector.log_upstream_request(
+        let request = UpstreamRequestData::new(
             "backend",
             "10.0.0.1:80",
             100,  // request_time
@@ -325,6 +326,7 @@ mod tests {
             2048, // bytes_received
             200,  // status_code
         );
+        let result = collector.log_upstream_request(&request);
 
         assert!(result.is_ok());
 
@@ -347,13 +349,37 @@ mod tests {
 
         // Log multiple requests to different servers
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                100,
+                50,
+                1000,
+                500,
+                200,
+            ))
             .unwrap();
         collector
-            .log_upstream_request("backend", "10.0.0.2:80", 150, 75, 1500, 750, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.2:80",
+                150,
+                75,
+                1500,
+                750,
+                200,
+            ))
             .unwrap();
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 120, 60, 1200, 600, 404)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                120,
+                60,
+                1200,
+                600,
+                404,
+            ))
             .unwrap();
 
         let zone = collector.get_upstream_zone("backend").unwrap();
@@ -377,10 +403,26 @@ mod tests {
 
         // Log requests to different upstreams
         collector
-            .log_upstream_request("backend1", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend1",
+                "10.0.0.1:80",
+                100,
+                50,
+                1000,
+                500,
+                200,
+            ))
             .unwrap();
         collector
-            .log_upstream_request("backend2", "10.0.0.2:80", 150, 75, 1500, 750, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend2",
+                "10.0.0.2:80",
+                150,
+                75,
+                1500,
+                750,
+                200,
+            ))
             .unwrap();
 
         let zones = collector.get_all_upstream_zones().unwrap();
@@ -404,7 +446,15 @@ mod tests {
 
         // Add some statistics
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 100, 50, 1000, 500, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                100,
+                50,
+                1000,
+                500,
+                200,
+            ))
             .unwrap();
 
         // Verify data exists
@@ -426,13 +476,37 @@ mod tests {
 
         // Log requests with different timing
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 100, 40, 1000, 500, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                100,
+                40,
+                1000,
+                500,
+                200,
+            ))
             .unwrap();
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 200, 80, 1500, 750, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                200,
+                80,
+                1500,
+                750,
+                200,
+            ))
             .unwrap();
         collector
-            .log_upstream_request("backend", "10.0.0.1:80", 150, 60, 1200, 600, 200)
+            .log_upstream_request(&UpstreamRequestData::new(
+                "backend",
+                "10.0.0.1:80",
+                150,
+                60,
+                1200,
+                600,
+                200,
+            ))
             .unwrap();
 
         let zone = collector.get_upstream_zone("backend").unwrap();
@@ -447,6 +521,51 @@ mod tests {
         // Test average calculations
         assert_eq!(server.avg_request_time(), 150.0); // 450 / 3
         assert_eq!(server.avg_response_time(), 60.0); // 180 / 3
+    }
+}
+
+/// Upstream request data container
+///
+/// Contains all metrics for a single upstream request
+#[derive(Debug, Clone)]
+pub struct UpstreamRequestData {
+    /// Name of the upstream group
+    pub upstream_name: String,
+    /// Address of the upstream server
+    pub upstream_addr: String,
+    /// Total request processing time in milliseconds
+    pub request_time: u64,
+    /// Upstream response time in milliseconds
+    pub upstream_response_time: u64,
+    /// Bytes sent to upstream
+    pub bytes_sent: u64,
+    /// Bytes received from upstream
+    pub bytes_received: u64,
+    /// HTTP status code from upstream
+    pub status_code: u16,
+}
+
+impl UpstreamRequestData {
+    /// Create new upstream request data
+    #[allow(clippy::too_many_arguments)] // Constructor with all required fields
+    pub fn new(
+        upstream_name: &str,
+        upstream_addr: &str,
+        request_time: u64,
+        upstream_response_time: u64,
+        bytes_sent: u64,
+        bytes_received: u64,
+        status_code: u16,
+    ) -> Self {
+        Self {
+            upstream_name: upstream_name.to_string(),
+            upstream_addr: upstream_addr.to_string(),
+            request_time,
+            upstream_response_time,
+            bytes_sent,
+            bytes_received,
+            status_code,
+        }
     }
 }
 
@@ -476,24 +595,9 @@ impl UpstreamStatsCollector {
     ///
     /// # Arguments
     ///
-    /// * `upstream_name` - Name of the upstream group
-    /// * `upstream_addr` - Address of the upstream server
-    /// * `request_time` - Total request processing time in milliseconds
-    /// * `upstream_response_time` - Upstream response time in milliseconds
-    /// * `bytes_sent` - Bytes sent to upstream
-    /// * `bytes_received` - Bytes received from upstream
-    /// * `status_code` - HTTP status code from upstream
+    /// * `request` - Upstream request data containing all metrics
     #[allow(dead_code)] // For future nginx integration
-    pub fn log_upstream_request(
-        &self,
-        upstream_name: &str,
-        upstream_addr: &str,
-        request_time: u64,
-        upstream_response_time: u64,
-        bytes_sent: u64,
-        bytes_received: u64,
-        status_code: u16,
-    ) -> Result<(), &'static str> {
+    pub fn log_upstream_request(&self, request: &UpstreamRequestData) -> Result<(), &'static str> {
         let mut zones = self
             .upstream_zones
             .write()
@@ -501,22 +605,22 @@ impl UpstreamStatsCollector {
 
         // Get or create upstream zone
         let upstream_zone = zones
-            .entry(upstream_name.to_string())
-            .or_insert_with(|| UpstreamZone::new(upstream_name));
+            .entry(request.upstream_name.clone())
+            .or_insert_with(|| UpstreamZone::new(&request.upstream_name));
 
         // Get or create server statistics
-        let server_stats = upstream_zone.get_or_create_server(upstream_addr);
+        let server_stats = upstream_zone.get_or_create_server(&request.upstream_addr);
 
         // Update statistics
         server_stats.request_counter += 1;
-        server_stats.in_bytes += bytes_received;
-        server_stats.out_bytes += bytes_sent;
+        server_stats.in_bytes += request.bytes_received;
+        server_stats.out_bytes += request.bytes_sent;
 
         // Update response status
-        server_stats.update_response_status(status_code);
+        server_stats.update_response_status(request.status_code);
 
         // Update timing information
-        server_stats.update_timing(request_time, upstream_response_time);
+        server_stats.update_timing(request.request_time, request.upstream_response_time);
 
         Ok(())
     }
@@ -583,8 +687,9 @@ pub unsafe fn init_upstream_stats_collector() {
 /// This function is unsafe because it accesses global static variables.
 /// The caller must ensure that init_upstream_stats_collector() has been called first.
 #[allow(dead_code)] // For future nginx integration
+#[allow(static_mut_refs)] // Required for nginx integration
 pub unsafe fn get_upstream_stats_collector() -> Option<&'static UpstreamStatsCollector> {
-    unsafe { &*(&raw const UPSTREAM_STATS_COLLECTOR) }.as_ref()
+    unsafe { UPSTREAM_STATS_COLLECTOR.as_ref() }
 }
 
 /// Extract nginx variable as string
@@ -645,7 +750,7 @@ pub unsafe extern "C" fn upstream_log_handler(r: *mut ngx_http_request_t) -> ngx
     let status_code = 200; // Placeholder
 
     // Log the upstream request
-    match collector.log_upstream_request(
+    let request = UpstreamRequestData::new(
         &upstream_name,
         &upstream_addr,
         request_time,
@@ -653,7 +758,8 @@ pub unsafe extern "C" fn upstream_log_handler(r: *mut ngx_http_request_t) -> ngx
         bytes_sent,
         bytes_received,
         status_code,
-    ) {
+    );
+    match collector.log_upstream_request(&request) {
         Ok(()) => NGX_OK as ngx_int_t,
         Err(_) => NGX_ERROR as ngx_int_t,
     }
