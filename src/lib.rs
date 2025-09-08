@@ -15,6 +15,7 @@ mod vts_node;
 mod upstream_stats;
 mod cache_stats;
 mod stats;
+mod prometheus;
 
 /// VTS shared memory context structure
 ///
