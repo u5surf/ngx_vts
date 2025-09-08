@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::raw::c_void;
-use chrono::{DateTime, Utc};
+// Note: chrono removed as it's not in Cargo.toml dependencies
 
 #[derive(Debug, Clone)]
 pub struct VtsServerStats {
@@ -74,7 +74,7 @@ pub struct VtsConnectionStats {
     pub handled: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VtsStats {
     pub hostname: String,
     pub version: String,
@@ -206,11 +206,11 @@ impl VtsStatsManager {
 
     pub fn init_shared_memory(&mut self, cf: *mut ngx_conf_t) -> Result<(), &'static str> {
         unsafe {
-            let pool = (*cf).pool;
-            let name = ngx_string!("vts_stats_zone");
+            let _pool = (*cf).pool;
+            let mut name = ngx_string!("vts_stats_zone");
             let size = 1024 * 1024; // 1MB shared memory
 
-            let shm_zone = ngx_shared_memory_add(cf, &name, size, &ngx_http_vts_module as *const _ as *mut _);
+            let shm_zone = ngx_shared_memory_add(cf, &mut name, size, &crate::ngx_http_vts_module as *const _ as *mut _);
             if shm_zone.is_null() {
                 return Err("Failed to allocate shared memory zone");
             }
@@ -249,7 +249,8 @@ impl VtsStatsManager {
 
     pub fn get_stats(&self) -> VtsStats {
         let stats = self.stats.read().unwrap();
-        stats.clone()
+        // Clone the inner data instead of the guard
+        (*stats).clone()
     }
 
     pub fn reset_stats(&self) {
@@ -266,7 +267,9 @@ unsafe impl Send for VtsStatsManager {}
 unsafe impl Sync for VtsStatsManager {}
 
 // Shared memory zone initialization callback
-extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t) -> ngx_int_t {
+extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, _data: *mut c_void) -> ngx_int_t {
     // Initialize shared memory structures here
+    // _data parameter added to match expected signature
+    let _ = shm_zone; // Suppress unused warning
     NGX_OK as ngx_int_t
 }
