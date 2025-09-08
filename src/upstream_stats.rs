@@ -689,7 +689,7 @@ pub unsafe fn init_upstream_stats_collector() {
 #[allow(dead_code)] // For future nginx integration
 #[allow(static_mut_refs)] // Required for nginx integration
 pub unsafe fn get_upstream_stats_collector() -> Option<&'static UpstreamStatsCollector> {
-    unsafe { UPSTREAM_STATS_COLLECTOR.as_ref() }
+    UPSTREAM_STATS_COLLECTOR.as_ref()
 }
 
 /// Extract nginx variable as string
