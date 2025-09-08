@@ -12,6 +12,9 @@ use std::os::raw::{c_char, c_void};
 
 mod config;
 mod vts_node;
+mod upstream_stats;
+mod cache_stats;
+mod stats;
 
 /// VTS shared memory context structure
 ///
