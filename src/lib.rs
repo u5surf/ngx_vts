@@ -25,6 +25,9 @@ mod vts_node;
 #[cfg(test)]
 include!("../test_issue1_resolution.rs");
 
+#[cfg(test)]
+include!("../test_issue2_resolution.rs");
+
 /// VTS shared memory context structure
 ///
 /// Stores the red-black tree and slab pool for VTS statistics
@@ -75,6 +78,59 @@ pub fn update_upstream_zone_stats(
             status_code,
         );
     }
+}
+
+/// External API for tracking upstream requests dynamically
+/// This function can be called from external systems or nginx modules
+/// to track real-time upstream statistics
+///
+/// # Safety
+///
+/// This function is unsafe because it dereferences raw C string pointers.
+/// The caller must ensure that:
+/// - `upstream_name` and `server_addr` are valid, non-null C string pointers
+/// - The strings pointed to by these pointers live for the duration of the call
+/// - The strings are properly null-terminated
+#[no_mangle]
+pub unsafe extern "C" fn vts_track_upstream_request(
+    upstream_name: *const c_char,
+    server_addr: *const c_char,
+    request_time: u64,
+    upstream_response_time: u64,
+    bytes_sent: u64,
+    bytes_received: u64,
+    status_code: u16,
+) {
+    if upstream_name.is_null() || server_addr.is_null() {
+        return;
+    }
+
+    let upstream_name_str = std::ffi::CStr::from_ptr(upstream_name)
+        .to_str()
+        .unwrap_or("unknown");
+    let server_addr_str = std::ffi::CStr::from_ptr(server_addr)
+        .to_str()
+        .unwrap_or("unknown:0");
+
+    if let Ok(mut manager) = VTS_MANAGER.write() {
+        manager.update_upstream_stats(
+            upstream_name_str,
+            server_addr_str,
+            request_time,
+            upstream_response_time,
+            bytes_sent,
+            bytes_received,
+            status_code,
+        );
+    }
+}
+
+/// Check if upstream statistics collection is enabled
+#[no_mangle]
+pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
+    // For now, always return true if VTS_MANAGER is available
+    // In a full implementation, this would check configuration
+    VTS_MANAGER.read().is_ok()
 }
 
 /// VTS main configuration structure (simplified for now)
@@ -656,39 +712,14 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 6] = [
 
 /// Module post-configuration initialization
 unsafe extern "C" fn ngx_http_vts_init(_cf: *mut ngx_conf_t) -> ngx_int_t {
-    // Initialize upstream statistics with sample data to ensure status page shows data
-    // This simulates real traffic for demonstration purposes
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        // Add some sample upstream statistics for the backend from ISSUE1.md
-        manager.update_upstream_stats(
-            "backend",
-            "127.0.0.1:8080",
-            50,  // request_time (ms)
-            25,  // upstream_response_time (ms)
-            500, // bytes_sent
-            250, // bytes_received
-            200, // status_code
-        );
+    // Initialize VTS module - no pre-population of statistics
+    // Statistics will be collected dynamically as requests are processed
 
-        // Add additional sample requests to show varied statistics
-        for i in 1..=10 {
-            let status = if i % 10 == 0 {
-                500
-            } else if i % 8 == 0 {
-                404
-            } else {
-                200
-            };
-            manager.update_upstream_stats(
-                "backend",
-                "127.0.0.1:8080",
-                40 + (i * 5),    // varying request times
-                20 + (i * 2),    // varying upstream response times
-                1000 + (i * 50), // varying bytes sent
-                500 + (i * 25),  // varying bytes received
-                status,
-            );
-        }
+    // Ensure the global manager is initialized but empty
+    if let Ok(mut manager) = VTS_MANAGER.write() {
+        // Clear any existing data to start fresh
+        manager.stats.clear();
+        manager.upstream_zones.clear();
     }
 
     NGX_OK as ngx_int_t
