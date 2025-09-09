@@ -259,7 +259,17 @@ mod integration_tests {
 
     #[test]
     fn test_integrated_vts_status_functionality() {
+        use std::sync::Mutex;
+        static TEST_MUTEX: Mutex<()> = Mutex::new(());
+        let _lock = TEST_MUTEX.lock().unwrap();
+        
         // Test the integrated VTS status with upstream stats
+        
+        // Clear any existing data to ensure clean test state
+        if let Ok(mut manager) = VTS_MANAGER.write() {
+            manager.stats.clear();
+            manager.upstream_zones.clear();
+        }
 
         // Add some sample server zone data
         update_server_zone_stats("example.com", 200, 1024, 2048, 150);
@@ -314,9 +324,19 @@ mod integration_tests {
         println!("=== End VTS Status Content ===");
     }
 
-    #[test]
+    #[test] 
     fn test_vts_stats_persistence() {
+        use std::sync::Mutex;
+        static TEST_MUTEX: Mutex<()> = Mutex::new(());
+        let _lock = TEST_MUTEX.lock().unwrap();
+        
         // Test that stats persist across multiple updates
+        
+        // Clear any existing data to ensure clean test state
+        if let Ok(mut manager) = VTS_MANAGER.write() {
+            manager.stats.clear();
+            manager.upstream_zones.clear();
+        }
 
         let initial_content = generate_vts_status_content();
         let _initial_backend_requests = if initial_content.contains("test_backend") {
