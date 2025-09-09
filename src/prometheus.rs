@@ -188,45 +188,37 @@ impl PrometheusFormatter {
 
         for (upstream_name, zone) in upstream_zones {
             for (server_addr, stats) in &zone.servers {
+                // Always show status code metrics, even when 0 (for proper VTS initialization display)
+
                 // 1xx responses
-                if stats.responses.status_1xx > 0 {
-                    output.push_str(&format!(
-                        "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"1xx\"}} {}\n",
-                        self.metric_prefix, upstream_name, server_addr, stats.responses.status_1xx
-                    ));
-                }
+                output.push_str(&format!(
+                    "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"1xx\"}} {}\n",
+                    self.metric_prefix, upstream_name, server_addr, stats.responses.status_1xx
+                ));
 
                 // 2xx responses
-                if stats.responses.status_2xx > 0 {
-                    output.push_str(&format!(
-                        "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"2xx\"}} {}\n",
-                        self.metric_prefix, upstream_name, server_addr, stats.responses.status_2xx
-                    ));
-                }
+                output.push_str(&format!(
+                    "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"2xx\"}} {}\n",
+                    self.metric_prefix, upstream_name, server_addr, stats.responses.status_2xx
+                ));
 
                 // 3xx responses
-                if stats.responses.status_3xx > 0 {
-                    output.push_str(&format!(
-                        "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"3xx\"}} {}\n",
-                        self.metric_prefix, upstream_name, server_addr, stats.responses.status_3xx
-                    ));
-                }
+                output.push_str(&format!(
+                    "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"3xx\"}} {}\n",
+                    self.metric_prefix, upstream_name, server_addr, stats.responses.status_3xx
+                ));
 
                 // 4xx responses
-                if stats.responses.status_4xx > 0 {
-                    output.push_str(&format!(
-                        "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"4xx\"}} {}\n",
-                        self.metric_prefix, upstream_name, server_addr, stats.responses.status_4xx
-                    ));
-                }
+                output.push_str(&format!(
+                    "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"4xx\"}} {}\n",
+                    self.metric_prefix, upstream_name, server_addr, stats.responses.status_4xx
+                ));
 
                 // 5xx responses
-                if stats.responses.status_5xx > 0 {
-                    output.push_str(&format!(
-                        "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"5xx\"}} {}\n",
-                        self.metric_prefix, upstream_name, server_addr, stats.responses.status_5xx
-                    ));
-                }
+                output.push_str(&format!(
+                    "{}upstream_responses_total{{upstream=\"{}\",server=\"{}\",status=\"5xx\"}} {}\n",
+                    self.metric_prefix, upstream_name, server_addr, stats.responses.status_5xx
+                ));
             }
         }
         output.push('\n');
