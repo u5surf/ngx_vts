@@ -1,5 +1,5 @@
 //! Statistics collection and management for VTS module
-//! 
+//!
 //! This module is currently unused but prepared for future implementation
 
 #![allow(dead_code, unused_imports)]
@@ -7,10 +7,9 @@
 use ngx::ffi::*;
 use ngx::{core, http, ngx_string};
 use std::collections::HashMap;
+use std::os::raw::c_void;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::os::raw::c_void;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
 pub struct VtsServerStats {
@@ -22,7 +21,7 @@ pub struct VtsServerStats {
     pub last_updated: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VtsResponseStats {
     pub status_1xx: u64,
     pub status_2xx: u64,
@@ -64,7 +63,7 @@ pub struct VtsCacheStats {
     pub scarce: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VtsConnectionStats {
     pub active: u64,
     pub reading: u64,
@@ -74,7 +73,7 @@ pub struct VtsConnectionStats {
     pub handled: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VtsStats {
     pub hostname: String,
     pub version: String,
@@ -100,18 +99,6 @@ impl Default for VtsServerStats {
     }
 }
 
-impl Default for VtsResponseStats {
-    fn default() -> Self {
-        VtsResponseStats {
-            status_1xx: 0,
-            status_2xx: 0,
-            status_3xx: 0,
-            status_4xx: 0,
-            status_5xx: 0,
-        }
-    }
-}
-
 impl Default for VtsRequestTimes {
     fn default() -> Self {
         VtsRequestTimes {
@@ -119,19 +106,6 @@ impl Default for VtsRequestTimes {
             min: 0.0,
             max: 0.0,
             avg: 0.0,
-        }
-    }
-}
-
-impl Default for VtsConnectionStats {
-    fn default() -> Self {
-        VtsConnectionStats {
-            active: 0,
-            reading: 0,
-            writing: 0,
-            waiting: 0,
-            accepted: 0,
-            handled: 0,
         }
     }
 }
@@ -144,7 +118,13 @@ impl VtsServerStats {
             .as_secs()
     }
 
-    pub fn update_request(&mut self, status: u16, bytes_in: u64, bytes_out: u64, request_time: f64) {
+    pub fn update_request(
+        &mut self,
+        status: u16,
+        bytes_in: u64,
+        bytes_out: u64,
+        request_time: f64,
+    ) {
         self.requests += 1;
         self.bytes_in += bytes_in;
         self.bytes_out += bytes_out;
@@ -206,11 +186,16 @@ impl VtsStatsManager {
 
     pub fn init_shared_memory(&mut self, cf: *mut ngx_conf_t) -> Result<(), &'static str> {
         unsafe {
-            let pool = (*cf).pool;
-            let name = ngx_string!("vts_stats_zone");
+            let _pool = (*cf).pool;
+            let mut name = ngx_string!("vts_stats_zone");
             let size = 1024 * 1024; // 1MB shared memory
 
-            let shm_zone = ngx_shared_memory_add(cf, &name, size, &ngx_http_vts_module as *const _ as *mut _);
+            let shm_zone = ngx_shared_memory_add(
+                cf,
+                &mut name,
+                size,
+                &raw const crate::ngx_http_vts_module as *const _ as *mut _,
+            );
             if shm_zone.is_null() {
                 return Err("Failed to allocate shared memory zone");
             }
@@ -231,11 +216,12 @@ impl VtsStatsManager {
         request_time: f64,
     ) {
         let mut stats = self.stats.write().unwrap();
-        
-        let server_stats = stats.server_zones
+
+        let server_stats = stats
+            .server_zones
             .entry(server_name.to_string())
-            .or_insert_with(VtsServerStats::default);
-        
+            .or_default();
+
         server_stats.update_request(status, bytes_in, bytes_out, request_time);
     }
 
@@ -249,7 +235,8 @@ impl VtsStatsManager {
 
     pub fn get_stats(&self) -> VtsStats {
         let stats = self.stats.read().unwrap();
-        stats.clone()
+        // Clone the inner data instead of the guard
+        (*stats).clone()
     }
 
     pub fn reset_stats(&self) {
@@ -266,7 +253,9 @@ unsafe impl Send for VtsStatsManager {}
 unsafe impl Sync for VtsStatsManager {}
 
 // Shared memory zone initialization callback
-extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t) -> ngx_int_t {
+extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, _data: *mut c_void) -> ngx_int_t {
     // Initialize shared memory structures here
+    // _data parameter added to match expected signature
+    let _ = shm_zone; // Suppress unused warning
     NGX_OK as ngx_int_t
 }

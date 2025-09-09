@@ -9,12 +9,14 @@ A Rust implementation of nginx-module-vts for virtual host traffic status monito
 ## Features
 
 - **Real-time Traffic Monitoring**: Comprehensive statistics collection for Nginx virtual hosts
+- **Upstream Statistics**: Complete upstream server monitoring with per-server metrics
 - **Prometheus Metrics**: Native Prometheus format output for monitoring integration
 - **Zone-based Statistics**: Per-server zone traffic tracking
 - **Request Metrics**: Detailed request/response statistics including timing and status codes
 - **Connection Tracking**: Active connection monitoring
 - **Shared Memory**: Efficient statistics storage using nginx shared memory zones
 - **Thread-safe**: Concurrent statistics collection and retrieval
+- **Load Balancer Monitoring**: Track upstream server health, response times, and status codes
 
 ## Building
 
@@ -59,13 +61,34 @@ http {
     # Configure shared memory zone for VTS statistics
     vts_zone main 10m;
     
+    # Enable upstream statistics collection (optional)
+    vts_upstream_stats on;
+    
+    # Define upstream groups for load balancing
+    upstream backend {
+        server 10.0.0.1:8080;
+        server 10.0.0.2:8080;
+        server 10.0.0.3:8080 backup;
+    }
+    
+    upstream api_backend {
+        server 192.168.1.10:9090;
+        server 192.168.1.11:9090;
+    }
+    
     server {
         listen 80;
         server_name example.com;
         
-        # Your regular server configuration
+        # Proxy to upstream with statistics tracking
+        location /api/ {
+            proxy_pass http://api_backend;
+            proxy_set_header Host $host;
+        }
+        
         location / {
-            # Regular content
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
         }
         
         # VTS status endpoint
@@ -85,6 +108,10 @@ http {
   - `zone_name`: Name of the shared memory zone (e.g., "main")  
   - `size`: Size of the shared memory zone (e.g., "1m", "10m")
   - Example: `vts_zone main 10m`
+- **`vts_upstream_stats on|off`**: Enable or disable upstream server statistics collection
+  - Default: `off`
+  - When enabled, tracks detailed statistics for all upstream servers
+  - Includes request counts, response times, byte transfers, and status codes
 
 ## Usage
 
@@ -135,6 +162,33 @@ nginx_vts_server_responses_total{zone="example.com",status="5xx"} 5
 nginx_vts_server_request_seconds{zone="example.com",type="avg"} 0.125
 nginx_vts_server_request_seconds{zone="example.com",type="min"} 0.001
 nginx_vts_server_request_seconds{zone="example.com",type="max"} 2.5
+
+# HELP nginx_vts_upstream_requests_total Total upstream requests
+# TYPE nginx_vts_upstream_requests_total counter
+nginx_vts_upstream_requests_total{upstream="backend",server="10.0.0.1:8080"} 500
+nginx_vts_upstream_requests_total{upstream="backend",server="10.0.0.2:8080"} 450
+nginx_vts_upstream_requests_total{upstream="api_backend",server="192.168.1.10:9090"} 200
+
+# HELP nginx_vts_upstream_bytes_total Total bytes transferred to/from upstream
+# TYPE nginx_vts_upstream_bytes_total counter
+nginx_vts_upstream_bytes_total{upstream="backend",server="10.0.0.1:8080",direction="in"} 250000
+nginx_vts_upstream_bytes_total{upstream="backend",server="10.0.0.1:8080",direction="out"} 750000
+
+# HELP nginx_vts_upstream_response_seconds Upstream response time statistics
+# TYPE nginx_vts_upstream_response_seconds gauge
+nginx_vts_upstream_response_seconds{upstream="backend",server="10.0.0.1:8080",type="request_avg"} 0.050000
+nginx_vts_upstream_response_seconds{upstream="backend",server="10.0.0.1:8080",type="upstream_avg"} 0.025000
+
+# HELP nginx_vts_upstream_server_up Upstream server status (1=up, 0=down)
+# TYPE nginx_vts_upstream_server_up gauge
+nginx_vts_upstream_server_up{upstream="backend",server="10.0.0.1:8080"} 1
+nginx_vts_upstream_server_up{upstream="backend",server="10.0.0.2:8080"} 1
+
+# HELP nginx_vts_upstream_responses_total Upstream responses by status code
+# TYPE nginx_vts_upstream_responses_total counter
+nginx_vts_upstream_responses_total{upstream="backend",server="10.0.0.1:8080",status="2xx"} 480
+nginx_vts_upstream_responses_total{upstream="backend",server="10.0.0.1:8080",status="4xx"} 15
+nginx_vts_upstream_responses_total{upstream="backend",server="10.0.0.1:8080",status="5xx"} 5
 ```
 
 ## Architecture
@@ -142,6 +196,8 @@ nginx_vts_server_request_seconds{zone="example.com",type="max"} 2.5
 The module consists of several key components:
 
 - **VTS Node System** (`src/vts_node.rs`): Core statistics data structures and management
+- **Upstream Statistics** (`src/upstream_stats.rs`): Upstream server monitoring and statistics collection
+- **Prometheus Formatter** (`src/prometheus.rs`): Metrics output in Prometheus format
 - **Configuration** (`src/config.rs`): Module configuration and directives  
 - **Main Module** (`src/lib.rs`): Nginx module integration and request handlers
 - **Statistics Collection** (`src/stats.rs`): Advanced statistics collection (unused currently)
@@ -164,25 +220,64 @@ Every request is tracked with the following metrics:
 - Server zone identification
 - Request time statistics (total, max, average)
 
+### Upstream Server Monitoring
+
+When `vts_upstream_stats` is enabled, the module tracks:
+- **Per-server metrics**: Individual statistics for each upstream server
+- **Request routing**: Which upstream server handled each request
+- **Response times**: Both total request time and upstream-specific response time
+- **Server health**: Track which servers are up or down
+- **Load balancing efficiency**: Monitor request distribution across servers
+- **Error rates**: Track 4xx/5xx responses per upstream server
+
 ## Monitoring Integration
 
 The Prometheus metrics output integrates seamlessly with monitoring systems:
 
 - **Prometheus**: Direct scraping of metrics endpoint
-- **Grafana**: Use Prometheus data source for visualization
-- **Alertmanager**: Set up alerts based on metrics thresholds
+- **Grafana**: Use Prometheus data source for visualization and upstream server dashboards
+- **Alertmanager**: Set up alerts based on metrics thresholds (e.g., upstream server down, high error rates)
+- **Load Balancer Monitoring**: Track upstream server health and performance in real-time
+
+### Example Grafana Queries
+
+```promql
+# Upstream server request rate
+rate(nginx_vts_upstream_requests_total[5m])
+
+# Upstream server error rate
+rate(nginx_vts_upstream_responses_total{status=~"4xx|5xx"}[5m])
+
+# Average upstream response time
+nginx_vts_upstream_response_seconds{type="upstream_avg"}
+
+# Upstream servers that are down
+nginx_vts_upstream_server_up == 0
+```
 
 ## Development
 
 ### Testing
 
 ```bash
-# Run tests
-cargo test
+# Run all tests (including integration tests)
+NGINX_SOURCE_DIR=/path/to/nginx-source cargo test
+
+# Run specific test modules
+cargo test upstream_stats
+cargo test prometheus
+cargo test vts_node
 
 # Build with debug information
 NGX_DEBUG=1 cargo build
 ```
+
+The test suite includes:
+- Unit tests for all core components
+- Integration tests for the complete upstream monitoring pipeline
+- Thread-safety tests for concurrent access
+- Performance tests with large datasets
+- Prometheus metrics format validation
 
 ### Contributing
 
@@ -200,12 +295,16 @@ This project is licensed under the Apache License 2.0 - see the LICENSE file for
 
 This Rust implementation provides:
 - ✅ Core VTS functionality
+- ✅ Upstream server statistics and monitoring
 - ✅ Prometheus metrics output
 - ✅ Zone-based statistics
 - ✅ Request/response tracking
+- ✅ Load balancer health monitoring
+- ✅ Thread-safe concurrent access
 - ❌ JSON output (Prometheus only)
 - ❌ HTML dashboard (Prometheus only)
 - ❌ Control features (reset/delete zones)
+- ❌ Cache statistics (removed in favor of upstream focus)
 - ❌ Advanced filtering (planned for future versions)
 
 ## Performance

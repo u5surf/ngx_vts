@@ -41,3 +41,9 @@ nginx.conf.local
 # Development environment
 .env
 .env.local
+
+# claude code develop docs
+/docs/
+nginx-1.28.0/
+nginx-1.28.0.tar.gz
+examples/
