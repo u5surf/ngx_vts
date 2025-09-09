@@ -3,14 +3,12 @@
 // and update dynamically based on real requests
 
 mod issue2_test {
-    use crate::{generate_vts_status_content, update_upstream_zone_stats, vts_track_upstream_request, VTS_MANAGER};
+    use crate::{generate_vts_status_content, update_upstream_zone_stats, vts_track_upstream_request, GLOBAL_VTS_TEST_MUTEX, VTS_MANAGER};
     use std::ffi::CString;
     
     #[test]
     fn test_issue2_zero_initialization() {
-        use std::sync::Mutex;
-        static TEST_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
         
         // Clear all existing data to simulate fresh nginx startup
         if let Ok(mut manager) = VTS_MANAGER.write() {
@@ -43,9 +41,7 @@ mod issue2_test {
     
     #[test]
     fn test_issue2_dynamic_request_tracking() {
-        use std::sync::Mutex;
-        static TEST_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
         
         // Clear all existing data
         if let Ok(mut manager) = VTS_MANAGER.write() {
@@ -112,9 +108,7 @@ mod issue2_test {
     
     #[test] 
     fn test_issue2_external_c_api() {
-        use std::sync::Mutex;
-        static TEST_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
         
         // Clear state
         if let Ok(mut manager) = VTS_MANAGER.write() {

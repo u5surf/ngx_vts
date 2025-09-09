@@ -15,6 +15,9 @@ use std::sync::{Arc, RwLock};
 use crate::prometheus::PrometheusFormatter;
 use crate::vts_node::VtsStatsManager;
 
+#[cfg(test)]
+static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 mod config;
 mod handlers;
 mod prometheus;
@@ -315,9 +318,7 @@ mod integration_tests {
 
     #[test]
     fn test_integrated_vts_status_functionality() {
-        use std::sync::Mutex;
-        static TEST_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
 
         // Test the integrated VTS status with upstream stats
 
@@ -382,9 +383,7 @@ mod integration_tests {
 
     #[test]
     fn test_vts_stats_persistence() {
-        use std::sync::Mutex;
-        static TEST_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
 
         // Test that stats persist across multiple updates
 

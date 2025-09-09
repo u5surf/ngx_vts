@@ -3,10 +3,12 @@
 // server shows statistics as expected in the issue.
 
 mod issue1_test {
-    use crate::{generate_vts_status_content, VTS_MANAGER};
+    use crate::{generate_vts_status_content, GLOBAL_VTS_TEST_MUTEX, VTS_MANAGER};
     
     #[test]
     fn test_issue1_backend_upstream_statistics() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        
         // Simulate the specific scenario from ISSUE1.md:
         // - upstream backend { server 127.0.0.1:8080; }
         // - vts_upstream_stats on;
