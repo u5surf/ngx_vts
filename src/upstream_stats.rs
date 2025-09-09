@@ -4,10 +4,9 @@
 //! and managing upstream server statistics including request counts,
 //! byte transfers, response times, and server status information.
 
-use ngx::ffi::*;
+use ngx::ffi::{ngx_http_request_t, ngx_int_t, NGX_ERROR, NGX_OK};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-// Note: core is imported but used in commented-out nginx integration functions
 
 /// Response statistics structure (reused from stats.rs design)
 #[derive(Debug, Clone, Default)]

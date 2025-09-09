@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-// Note: chrono removed as it's not in Cargo.toml dependencies
 
 #[derive(Debug, Clone)]
 pub struct VtsServerStats {

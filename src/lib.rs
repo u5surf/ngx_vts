@@ -801,11 +801,11 @@ unsafe fn register_log_phase_handler(_cf: *mut ngx_conf_t) -> Result<(), &'stati
     // that calls vts_track_upstream_request() function.
     //
     // For manual integration, nginx administrators can add calls to:
-    // vts_track_upstream_request(upstream_name, server_addr, request_time, 
+    // vts_track_upstream_request(upstream_name, server_addr, request_time,
     //                           upstream_time, bytes_sent, bytes_received, status)
     //
     // This provides the same functionality without FFI compatibility issues.
-    
+
     Ok(())
 }
 
@@ -1083,7 +1083,7 @@ mod tests {
     fn test_generate_vts_status_content() {
         let content = generate_vts_status_content();
         assert!(content.contains("nginx-vts-rust"));
-        assert!(content.contains("Version: 0.1.0"));
+        assert!(content.contains(&format!("Version: {}", env!("CARGO_PKG_VERSION"))));
         assert!(content.contains("# VTS Status: Active"));
         assert!(content.contains("test-hostname"));
         assert!(content.contains("# Prometheus Metrics:"));
