@@ -262,9 +262,9 @@ mod integration_tests {
         use std::sync::Mutex;
         static TEST_MUTEX: Mutex<()> = Mutex::new(());
         let _lock = TEST_MUTEX.lock().unwrap();
-        
+
         // Test the integrated VTS status with upstream stats
-        
+
         // Clear any existing data to ensure clean test state
         if let Ok(mut manager) = VTS_MANAGER.write() {
             manager.stats.clear();
@@ -324,14 +324,14 @@ mod integration_tests {
         println!("=== End VTS Status Content ===");
     }
 
-    #[test] 
+    #[test]
     fn test_vts_stats_persistence() {
         use std::sync::Mutex;
         static TEST_MUTEX: Mutex<()> = Mutex::new(());
         let _lock = TEST_MUTEX.lock().unwrap();
-        
+
         // Test that stats persist across multiple updates
-        
+
         // Clear any existing data to ensure clean test state
         if let Ok(mut manager) = VTS_MANAGER.write() {
             manager.stats.clear();
@@ -541,21 +541,22 @@ unsafe extern "C" fn ngx_http_set_vts_upstream_stats(
     _conf: *mut c_void,
 ) -> *mut c_char {
     // Get the directive value (on/off)
-    let args = std::slice::from_raw_parts((*(*cf).args).elts as *const ngx_str_t, (*(*cf).args).nelts);
-    
+    let args =
+        std::slice::from_raw_parts((*(*cf).args).elts as *const ngx_str_t, (*(*cf).args).nelts);
+
     if args.len() < 2 {
-        return b"invalid number of arguments\0".as_ptr() as *mut c_char;
+        return c"invalid number of arguments".as_ptr() as *mut c_char;
     }
-    
+
     let value_slice = std::slice::from_raw_parts(args[1].data, args[1].len);
     let value_str = std::str::from_utf8_unchecked(value_slice);
-    
+
     let enable = match value_str {
         "on" => true,
         "off" => false,
-        _ => return b"invalid parameter, use 'on' or 'off'\0".as_ptr() as *mut c_char,
+        _ => return c"invalid parameter, use 'on' or 'off'".as_ptr() as *mut c_char,
     };
-    
+
     // Store the configuration globally (simplified approach)
     if let Ok(mut manager) = VTS_MANAGER.write() {
         // For now, we store this in a simple way - if enabled, ensure sample data exists
@@ -566,7 +567,7 @@ unsafe extern "C" fn ngx_http_set_vts_upstream_stats(
             }
         }
     }
-    
+
     std::ptr::null_mut()
 }
 
@@ -663,27 +664,33 @@ unsafe extern "C" fn ngx_http_vts_init(_cf: *mut ngx_conf_t) -> ngx_int_t {
             "backend",
             "127.0.0.1:8080",
             50,  // request_time (ms)
-            25,  // upstream_response_time (ms) 
+            25,  // upstream_response_time (ms)
             500, // bytes_sent
             250, // bytes_received
             200, // status_code
         );
-        
+
         // Add additional sample requests to show varied statistics
         for i in 1..=10 {
-            let status = if i % 10 == 0 { 500 } else if i % 8 == 0 { 404 } else { 200 };
+            let status = if i % 10 == 0 {
+                500
+            } else if i % 8 == 0 {
+                404
+            } else {
+                200
+            };
             manager.update_upstream_stats(
                 "backend",
                 "127.0.0.1:8080",
-                40 + (i * 5), // varying request times
-                20 + (i * 2), // varying upstream response times
+                40 + (i * 5),    // varying request times
+                20 + (i * 2),    // varying upstream response times
                 1000 + (i * 50), // varying bytes sent
                 500 + (i * 25),  // varying bytes received
                 status,
             );
         }
     }
-    
+
     NGX_OK as ngx_int_t
 }
 
