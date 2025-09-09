@@ -307,6 +307,18 @@ fn generate_vts_status_content() -> String {
     if !upstream_zones.is_empty() {
         let upstream_metrics = formatter.format_upstream_stats(upstream_zones);
         content.push_str(&upstream_metrics);
+    } else {
+        // When no upstream zones exist, show appropriate placeholder metrics
+        content.push_str(&format!(
+            "# HELP nginx_vts_info Nginx VTS module information\n\
+             # TYPE nginx_vts_info gauge\n\
+             nginx_vts_info{{version=\"{}\"}} 1\n\
+             \n\
+             # HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
+             # TYPE nginx_vts_upstream_zones_total gauge\n\
+             nginx_vts_upstream_zones_total 0\n",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 
     content
