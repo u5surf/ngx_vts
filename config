@@ -5,7 +5,7 @@ if test -n "$ngx_module_link"; then
     ngx_module_name=ngx_http_vts_module
     ngx_module_incs=
     ngx_module_deps=
-    ngx_module_srcs=
+    ngx_module_srcs="$ngx_addon_dir/src/ngx_http_vts_module.c $ngx_addon_dir/src/ngx_vts_wrapper.c"
     ngx_module_libs="$ngx_addon_dir/target/release/libngx_vts_rust.so"
     . auto/module
 else
