@@ -158,12 +158,11 @@ pub extern "C" fn ngx_http_vts_get_status() -> *const c_char {
 
     static STATUS_CACHE: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
 
-    let status_content = generate_vts_status_content();
-    let c_string = std::ffi::CString::new(status_content)
-        .unwrap_or_else(|_| std::ffi::CString::new("Failed to generate VTS status").unwrap());
-
     // Update cache with fresh content
     if let Ok(mut cache) = STATUS_CACHE.lock() {
+        let status_content = generate_vts_status_content();
+        let c_string = std::ffi::CString::new(status_content)
+            .unwrap_or_else(|_| std::ffi::CString::new("Failed to generate VTS status").unwrap());
         *cache = Some(c_string);
         cache.as_ref().unwrap().as_ptr()
     } else {

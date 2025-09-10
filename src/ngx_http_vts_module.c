@@ -217,11 +217,5 @@ ngx_http_vts_status_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static char *
 ngx_http_vts_upstream_stats_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    (void)cf;   // Mark as intentionally unused
-    (void)cmd;  // Mark as intentionally unused
-    (void)conf; // Mark as intentionally unused
-    
-    // For now, just accept the directive
-    // The LOG_PHASE handler will handle upstream tracking
-    return NGX_CONF_OK;
+    return ngx_conf_set_flag_slot(cf, cmd, conf);
 }
