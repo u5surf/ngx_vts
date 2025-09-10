@@ -147,21 +147,21 @@ pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
 
 /// Get VTS status content for C integration
 /// Returns a pointer to a freshly generated status content string
-/// 
+///
 /// # Safety
-/// 
+///
 /// The returned pointer is valid until the next call to this function.
 /// The caller must not free the returned pointer.
 #[no_mangle]
 pub extern "C" fn ngx_http_vts_get_status() -> *const c_char {
     use std::sync::Mutex;
-    
+
     static STATUS_CACHE: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
-    
+
     let status_content = generate_vts_status_content();
     let c_string = std::ffi::CString::new(status_content)
         .unwrap_or_else(|_| std::ffi::CString::new("Failed to generate VTS status").unwrap());
-    
+
     // Update cache with fresh content
     if let Ok(mut cache) = STATUS_CACHE.lock() {
         *cache = Some(c_string);
