@@ -75,7 +75,6 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         // Get timing information
         request_time = ngx_current_msec - r->start_msec;
         upstream_response_time = state->response_time; // Simplified
-
         // Get byte counts
         bytes_sent = state->bytes_sent;
         bytes_received = state->bytes_received;
@@ -89,7 +88,7 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         status_code = r->headers_out.status;
     }
 
-    if (request_time == 0 && r->start_sec > 0) {
+    if (request_time == 0 && r->start_msec > 0) {
         request_time = (ngx_current_msec - r->start_msec);
     }
 
