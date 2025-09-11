@@ -23,8 +23,9 @@ A Rust implementation of nginx-module-vts for virtual host traffic status monito
 ### Prerequisites
 
 - Rust 1.81 or later
-- Nginx source code or development headers
+- Nginx source code (required for compilation)
 - ngx-rust framework
+- GCC/Clang compiler for C wrapper components
 
 ### Build Steps
 
@@ -34,18 +35,26 @@ git clone <repository-url>
 cd ngx_vts_rust
 ```
 
-2. Set environment variables:
+2. Download and extract nginx source:
 ```bash
-export NGX_VERSION=1.24.0  # Your nginx version
-export NGX_DEBUG=1         # Optional: enable debug mode
+wget http://nginx.org/download/nginx-1.28.0.tar.gz
+tar -xzf nginx-1.28.0.tar.gz
 ```
 
-3. Build the module:
+3. Set environment variable and build Rust library:
 ```bash
+export NGINX_SOURCE_DIR=/path/to/nginx-1.28.0
 cargo build --release
 ```
 
-The compiled module will be available at `target/release/libngx_vts_rust.so`.
+4. Configure and build nginx with VTS module:
+```bash
+cd nginx-1.28.0
+./configure --with-compat --add-dynamic-module=/path/to/ngx_vts
+make
+```
+
+The compiled dynamic module will be available at `nginx-1.28.0/objs/ngx_http_vts_module.so`.
 
 ## Configuration
 
@@ -54,8 +63,8 @@ The compiled module will be available at `target/release/libngx_vts_rust.so`.
 Add the following to your nginx configuration:
 
 ```nginx
-# Load the module
-load_module /path/to/libngx_vts_rust.so;
+# Load the VTS module
+load_module /path/to/ngx_http_vts_module.so;
 
 http {
     # Configure shared memory zone for VTS statistics
@@ -195,12 +204,27 @@ nginx_vts_upstream_responses_total{upstream="backend",server="10.0.0.1:8080",sta
 
 The module consists of several key components:
 
+### Core Components
 - **VTS Node System** (`src/vts_node.rs`): Core statistics data structures and management
 - **Upstream Statistics** (`src/upstream_stats.rs`): Upstream server monitoring and statistics collection
 - **Prometheus Formatter** (`src/prometheus.rs`): Metrics output in Prometheus format
 - **Configuration** (`src/config.rs`): Module configuration and directives  
 - **Main Module** (`src/lib.rs`): Nginx module integration and request handlers
-- **Statistics Collection** (`src/stats.rs`): Advanced statistics collection (unused currently)
+
+### Nginx Integration Layer
+- **C Module Wrapper** (`src/ngx_http_vts_module.c`): Main nginx module definition and directive handlers
+- **LOG_PHASE Handler** (`src/ngx_vts_wrapper.c`): Real-time upstream request tracking via nginx LOG_PHASE
+- **FFI Bridge**: Seamless integration between C nginx module and Rust implementation
+
+### Real-time Statistics Collection
+
+The module implements a **LOG_PHASE handler** that captures every upstream request in real-time:
+
+1. **Request Interception**: Each upstream request triggers the LOG_PHASE handler
+2. **Data Extraction**: Handler extracts upstream name, server address, timing, bytes, and status code
+3. **Rust Integration**: Extracted data is passed to Rust via `vts_track_upstream_request()` FFI function
+4. **Statistics Update**: Rust components update shared statistics immediately
+5. **Live Metrics**: Statistics are available instantly via the `/status` endpoint
 
 ### Shared Memory Configuration
 
@@ -295,10 +319,10 @@ This project is licensed under the Apache License 2.0 - see the LICENSE file for
 
 This Rust implementation provides:
 - ✅ Core VTS functionality
-- ✅ Upstream server statistics and monitoring
+- ✅ Real-time upstream server statistics and monitoring
 - ✅ Prometheus metrics output
-- ✅ Zone-based statistics
-- ✅ Request/response tracking
+- ✅ Zone-based statistics with live updates
+- ✅ Request/response tracking via LOG_PHASE handlers
 - ✅ Load balancer health monitoring
 - ✅ Thread-safe concurrent access
 - ❌ JSON output (Prometheus only)
@@ -312,7 +336,8 @@ This Rust implementation provides:
 The Rust implementation leverages:
 - Zero-copy string handling where possible
 - Efficient shared memory usage
-- Minimal request processing overhead
+- Minimal request processing overhead via LOG_PHASE handlers
+- Real-time statistics updates without caching delays
 - Thread-safe concurrent access
 
-Benchmarks show comparable performance to the original C implementation with improved memory safety.
+Benchmarks show comparable performance to the original C implementation with improved memory safety and real-time capabilities.

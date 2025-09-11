@@ -145,6 +145,50 @@ pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
     VTS_MANAGER.read().is_ok()
 }
 
+/// Get VTS status content for C integration
+/// Returns a pointer to a freshly generated status content string
+///
+/// # Safety
+///
+/// The returned pointer is valid until the next call to this function.
+/// The caller must not free the returned pointer.
+#[no_mangle]
+pub extern "C" fn ngx_http_vts_get_status() -> *const c_char {
+    use std::sync::Mutex;
+
+    static STATUS_CACHE: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
+
+    // Update cache with fresh content
+    if let Ok(mut cache) = STATUS_CACHE.lock() {
+        let status_content = generate_vts_status_content();
+        let c_string = std::ffi::CString::new(status_content)
+            .unwrap_or_else(|_| std::ffi::CString::new("Failed to generate VTS status").unwrap());
+        *cache = Some(c_string);
+        cache.as_ref().unwrap().as_ptr()
+    } else {
+        // Fallback if mutex is poisoned
+        static FALLBACK: &[u8] = b"VTS Status: Error\0";
+        FALLBACK.as_ptr() as *const c_char
+    }
+}
+
+/// External initialization function for nginx module integration
+/// This function is called from the C wrapper during module initialization
+///
+/// # Safety
+///
+/// This function is safe to call from C code as it handles the null pointer case
+/// and doesn't dereference the configuration pointer directly.
+#[no_mangle]
+pub unsafe extern "C" fn ngx_http_vts_init_rust_module(_cf: *mut ngx_conf_t) -> ngx_int_t {
+    // Initialize upstream zones
+    if initialize_upstream_zones_from_config(_cf).is_err() {
+        return NGX_ERROR as ngx_int_t;
+    }
+
+    NGX_OK as ngx_int_t
+}
+
 /// VTS main configuration structure (simplified for now)
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -793,18 +837,20 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
 }
 
 /// Register LOG_PHASE handler for real-time request statistics collection
-/// Based on C implementation: cmcf->phases[NGX_HTTP_LOG_PHASE].handlers
-/// TEMPORARILY DISABLED: Direct FFI access causing segfault, using external C API instead
+///
+/// NOTE: Due to nginx-rust FFI limitations, this function exports the necessary
+/// hooks for external integration. The actual LOG_PHASE registration should be
+/// done by a companion C module that calls vts_track_upstream_request().
 unsafe fn register_log_phase_handler(_cf: *mut ngx_conf_t) -> Result<(), &'static str> {
-    // NOTE: Direct nginx FFI registration is disabled due to compatibility issues
-    // The LOG_PHASE handler integration should be done via external C code
-    // that calls vts_track_upstream_request() function.
+    // For now, we rely on external C code to register the LOG_PHASE handler
+    // The external handler should call vts_track_upstream_request() for each upstream request
     //
-    // For manual integration, nginx administrators can add calls to:
-    // vts_track_upstream_request(upstream_name, server_addr, request_time,
-    //                           upstream_time, bytes_sent, bytes_received, status)
+    // Future implementations can use direct nginx FFI once compatibility issues are resolved
     //
-    // This provides the same functionality without FFI compatibility issues.
+    // Alternative approaches:
+    // 1. nginx logging module extension that calls our C API
+    // 2. Custom nginx module that wraps our Rust functionality
+    // 3. Direct FFI integration when nginx-rust supports it
 
     Ok(())
 }
