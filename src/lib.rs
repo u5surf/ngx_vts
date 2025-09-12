@@ -70,21 +70,24 @@ fn calculate_time_diff_ms(
 /// Calculate request time using nginx-module-vts compatible method
 /// This function replicates the behavior of ngx_http_vhost_traffic_status_request_time
 fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
-    let tp = ngx_timeofday();
-    let current_sec = tp.sec as u64;
-    let current_msec = tp.msec as u64;
+    #[cfg(not(test))]
+    {
+        let tp = ngx_timeofday();
+        let current_sec = tp.sec as u64;
+        let current_msec = tp.msec as u64;
 
-    eprintln!(
-        "DEBUG: current_sec={}, current_msec={}, start_sec={}, start_msec={}",
-        current_sec, current_msec, start_sec, start_msec
-    );
+        let total_ms = calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec);
 
-    let total_ms = calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec);
-
-    eprintln!("DEBUG: calculated total_ms={}", total_ms);
-
-    // Ensure non-negative result (equivalent to ngx_max(ms, 0))
-    total_ms
+        // Ensure non-negative result (equivalent to ngx_max(ms, 0))
+        total_ms
+    }
+    
+    #[cfg(test)]
+    {
+        // In test environment, simulate a small time difference
+        // This avoids the ngx_timeofday() linking issue
+        calculate_time_diff_ms(start_sec, start_msec, start_sec, start_msec + 1)
+    }
 }
 
 /// Global VTS statistics manager
@@ -162,12 +165,6 @@ pub unsafe extern "C" fn vts_track_upstream_request(
 
     // Calculate request time using nginx-module-vts compatible method
     let request_time = calculate_request_time(start_sec, start_msec);
-
-    // Debug log the time calculation
-    eprintln!(
-        "DEBUG: start_sec={}, start_msec={}, calculated_request_time={}",
-        start_sec, start_msec, request_time
-    );
 
     if let Ok(mut manager) = VTS_MANAGER.write() {
         manager.update_upstream_stats(
