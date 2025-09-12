@@ -88,8 +88,15 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         status_code = r->headers_out.status;
     }
 
-    if (request_time == 0 && r->start_msec > 0) {
-        request_time = (ngx_current_msec - r->start_msec);
+    // calculate request time
+    // See. https://github.com/vozlt/nginx-module-vts/blob/bdb2699d87a84ed593de3ca114290740b530a514/src/ngx_http_vhost_traffic_status_module.c#L349
+    // FIXME: We would like to migrate this function into rust code if it is available `ngx_timeofday`.
+    if (r->start_sec > 0 && r->start_msec > 0) {
+        ngx_time_t *tp;
+        ngx_msec_int_t ms;
+        tp = ngx_timeofday();
+        ms = (ngx_msec_int_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
+        request_time = ms > 0 ? ms : 0;
     }
 
     // Convert nginx strings to C strings for Rust FFI
