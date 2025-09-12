@@ -62,9 +62,16 @@ fn calculate_time_diff_ms(
 ) -> u64 {
     // Calculate time difference in milliseconds
     // Formula: (current_sec - start_sec) * 1000 + (current_msec - start_msec)
-    let sec_diff = current_sec.saturating_sub(start_sec);
-    let msec_diff = current_msec.saturating_sub(start_msec);
-    sec_diff * 1000 + msec_diff
+    if current_msec >= start_msec {
+        let sec_diff = current_sec.saturating_sub(start_sec);
+        let msec_diff = current_msec - start_msec;
+        sec_diff * 1000 + msec_diff
+    } else {
+        // Borrow 1 second (1000 ms) from sec_diff
+        let sec_diff = current_sec.saturating_sub(start_sec + 1);
+        let msec_diff = (current_msec + 1000) - start_msec;
+        sec_diff * 1000 + msec_diff
+    }
 }
 
 /// Calculate request time using nginx-module-vts compatible method
