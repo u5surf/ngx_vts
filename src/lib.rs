@@ -67,10 +67,14 @@ fn calculate_time_diff_ms(
         let msec_diff = current_msec - start_msec;
         sec_diff * 1000 + msec_diff
     } else {
-        // Borrow 1 second (1000 ms) from sec_diff
-        let sec_diff = current_sec.saturating_sub(start_sec + 1);
-        let msec_diff = (current_msec + 1000) - start_msec;
-        sec_diff * 1000 + msec_diff
+        // Only borrow if current_sec > start_sec, otherwise return 0 to avoid underflow
+        if current_sec > start_sec {
+            let sec_diff = current_sec - (start_sec + 1);
+            let msec_diff = (current_msec + 1000) - start_msec;
+            sec_diff * 1000 + msec_diff
+        } else {
+            0
+        }
     }
 }
 
