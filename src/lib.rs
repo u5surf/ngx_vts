@@ -81,7 +81,7 @@ fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
         // Ensure non-negative result (equivalent to ngx_max(ms, 0))
         total_ms
     }
-    
+
     #[cfg(test)]
     {
         // In test environment, simulate a small time difference
