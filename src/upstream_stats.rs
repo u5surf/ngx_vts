@@ -138,47 +138,11 @@ impl UpstreamServerStats {
     ///
     /// # Arguments
     ///
-    /// * `request_time` - Total request processing time in milliseconds (from C side)
+    /// * `request_time` - Total request processing time in milliseconds
     /// * `upstream_response_time` - Upstream response time in milliseconds
     pub fn update_timing(&mut self, request_time: u64, upstream_response_time: u64) {
-        // Fix request_time calculation issue from C side
-        // The access log shows correct values (0.001 seconds = 1ms), but C side is passing
-        // incorrect values to Rust. We need to normalize the received values.
-        //
-        // Observed issue: receiving ~70,000,000 instead of expected ~1
-        // This suggests the value might be in different time units or has calculation errors.
-        let normalized_request_time = if request_time > 1000 {
-            // > 1 second is unreasonable for most requests
-            // The large values suggest the time calculation in C side is incorrect.
-            // Based on nginx access logs showing 0.001 seconds (1ms) for fast requests,
-            // we'll normalize abnormally large values to reasonable ranges.
-
-            // Convert large values that appear to be microseconds or other units to milliseconds
-            if request_time > 1_000_000 {
-                // > 1,000 seconds (definitely wrong)
-                // Assume it's microseconds * 1000 or similar error, convert back
-                let reasonable_ms = (request_time as f64 / 1_000_000.0).round() as u64;
-                if reasonable_ms > 0 && reasonable_ms < 10000 {
-                    // 0-10 seconds range
-                    reasonable_ms
-                } else {
-                    1 // fallback to 1ms
-                }
-            } else if request_time > 60000 {
-                // > 60 seconds (very unlikely)
-                // Clamp to reasonable maximum
-                1000 // 1 second fallback
-            } else {
-                request_time // Keep as-is for values 1-60 seconds
-            }
-        } else {
-            request_time // Keep normal values (0-1000ms)
-        };
-
-        // Additional validation: request time should not be 0 for actual requests
-        // and should be reasonable (< 60 seconds)
-        if normalized_request_time > 0 && normalized_request_time <= 60000 {
-            self.request_time_total += normalized_request_time;
+        if request_time > 0 {
+            self.request_time_total += request_time;
             self.request_time_counter += 1;
         }
 
