@@ -93,9 +93,24 @@ fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
 
     #[cfg(test)]
     {
-        // In test environment, simulate a small time difference
+        // In test environment, simulate a variety of time differences
         // This avoids the ngx_timeofday() linking issue
-        calculate_time_diff_ms(start_sec, start_msec, start_sec, start_msec + 1)
+        // For demonstration, cycle through several test cases to cover edge cases
+        // (In real tests, you would call calculate_time_diff_ms directly with various values)
+        let test_cases = [
+            // Same second, small ms diff
+            (start_sec, start_msec, start_sec, start_msec + 1),
+            // Next second, ms wraps around
+            (start_sec, 999, start_sec + 1, 0),
+            // Several seconds later, ms diff positive
+            (start_sec, start_msec, start_sec + 2, start_msec + 10),
+            // Next second, ms less than start (should borrow)
+            (start_sec, 900, start_sec + 1, 100),
+        ];
+        // Pick a test case based on the start_msec to vary the result
+        let idx = (start_msec as usize) % test_cases.len();
+        let (s_sec, s_msec, c_sec, c_msec) = test_cases[idx];
+        calculate_time_diff_ms(s_sec, s_msec, c_sec, c_msec)
     }
 }
 
