@@ -76,10 +76,8 @@ fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
         let current_sec = tp.sec as u64;
         let current_msec = tp.msec as u64;
 
-        let total_ms = calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec);
-
         // Ensure non-negative result (equivalent to ngx_max(ms, 0))
-        total_ms
+        calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec)
     }
 
     #[cfg(test)]
