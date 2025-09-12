@@ -13,7 +13,8 @@
 extern void vts_track_upstream_request(
     const char* upstream_name,
     const char* server_addr,
-    uint64_t request_time,
+    uint64_t start_sec,
+    uint64_t start_msec,
     uint64_t upstream_response_time,
     uint64_t bytes_sent,
     uint64_t bytes_received,
@@ -36,7 +37,6 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     ngx_http_upstream_state_t *state;
     ngx_str_t upstream_name = ngx_null_string;
     ngx_str_t server_addr = ngx_null_string; 
-    ngx_msec_t request_time = 0;
     ngx_msec_t upstream_response_time = 0;
     off_t bytes_sent = 0;
     off_t bytes_received = 0;
@@ -73,8 +73,7 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         }
 
         // Get timing information
-        request_time = ngx_current_msec - r->start_msec;
-        upstream_response_time = state->response_time; // Simplified
+        upstream_response_time = state->response_time;
         // Get byte counts
         bytes_sent = state->bytes_sent;
         bytes_received = state->bytes_received;
@@ -88,16 +87,7 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         status_code = r->headers_out.status;
     }
 
-    // calculate request time
-    // See. https://github.com/vozlt/nginx-module-vts/blob/bdb2699d87a84ed593de3ca114290740b530a514/src/ngx_http_vhost_traffic_status_module.c#L349
-    // FIXME: We would like to migrate this function into rust code if it is available `ngx_timeofday`.
-    if (r->start_sec > 0 && r->start_msec > 0) {
-        ngx_time_t *tp;
-        ngx_msec_int_t ms;
-        tp = ngx_timeofday();
-        ms = (ngx_msec_int_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
-        request_time = ms > 0 ? ms : 0;
-    }
+    // Request time calculation is now handled in Rust side using ngx_timeofday()
 
     // Convert nginx strings to C strings for Rust FFI
     if (upstream_name.len > 0 && upstream_name.len < sizeof(upstream_name_buf) - 1) {
@@ -122,7 +112,8 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     vts_track_upstream_request(
         (const char*)upstream_name_buf,
         (const char*)server_addr_buf,
-        (uint64_t)request_time,
+        (uint64_t)r->start_sec,
+        (uint64_t)r->start_msec,
         (uint64_t)upstream_response_time,
         (uint64_t)bytes_sent,
         (uint64_t)bytes_received,

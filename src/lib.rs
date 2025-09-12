@@ -52,6 +52,41 @@ struct VtsSharedContext {
     shpool: *mut ngx_slab_pool_t,
 }
 
+/// Calculate request time difference in milliseconds
+/// This implements the nginx-module-vts time calculation logic
+fn calculate_time_diff_ms(
+    start_sec: u64,
+    start_msec: u64,
+    current_sec: u64,
+    current_msec: u64,
+) -> u64 {
+    // Calculate time difference in milliseconds
+    // Formula: (current_sec - start_sec) * 1000 + (current_msec - start_msec)
+    let sec_diff = current_sec.saturating_sub(start_sec);
+    let msec_diff = current_msec.saturating_sub(start_msec);
+    sec_diff * 1000 + msec_diff
+}
+
+/// Calculate request time using nginx-module-vts compatible method
+/// This function replicates the behavior of ngx_http_vhost_traffic_status_request_time
+fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
+    let tp = ngx_timeofday();
+    let current_sec = tp.sec as u64;
+    let current_msec = tp.msec as u64;
+
+    eprintln!(
+        "DEBUG: current_sec={}, current_msec={}, start_sec={}, start_msec={}",
+        current_sec, current_msec, start_sec, start_msec
+    );
+
+    let total_ms = calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec);
+
+    eprintln!("DEBUG: calculated total_ms={}", total_ms);
+
+    // Ensure non-negative result (equivalent to ngx_max(ms, 0))
+    total_ms
+}
+
 /// Global VTS statistics manager
 static VTS_MANAGER: std::sync::LazyLock<Arc<RwLock<VtsStatsManager>>> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(VtsStatsManager::new())));
@@ -107,8 +142,9 @@ pub fn update_upstream_zone_stats(
 pub unsafe extern "C" fn vts_track_upstream_request(
     upstream_name: *const c_char,
     server_addr: *const c_char,
-    request_time: u64,
-    upstream_response_time: u64,
+    start_sec: u64,
+    start_msec: u64,
+    _upstream_response_time: u64,
     bytes_sent: u64,
     bytes_received: u64,
     status_code: u16,
@@ -124,12 +160,21 @@ pub unsafe extern "C" fn vts_track_upstream_request(
         .to_str()
         .unwrap_or("unknown:0");
 
+    // Calculate request time using nginx-module-vts compatible method
+    let request_time = calculate_request_time(start_sec, start_msec);
+
+    // Debug log the time calculation
+    eprintln!(
+        "DEBUG: start_sec={}, start_msec={}, calculated_request_time={}",
+        start_sec, start_msec, request_time
+    );
+
     if let Ok(mut manager) = VTS_MANAGER.write() {
         manager.update_upstream_stats(
             upstream_name_str,
             server_addr_str,
             request_time,
-            upstream_response_time,
+            request_time,
             bytes_sent,
             bytes_received,
             status_code,

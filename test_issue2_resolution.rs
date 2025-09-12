@@ -125,7 +125,8 @@ mod issue2_test {
             vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                75,   // request_time
+                1000, // start_sec (simulated)
+                500,  // start_msec (simulated)
                 38,   // upstream_response_time  
                 2048, // bytes_sent
                 1024, // bytes_received

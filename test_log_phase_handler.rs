@@ -37,7 +37,8 @@ mod log_phase_handler_test {
             crate::vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                85,   // request_time (ms)
+                1000, // start_sec (simulated)
+                500,  // start_msec (simulated)
                 42,   // upstream_response_time (ms)
                 1024, // bytes_sent
                 512,  // bytes_received
@@ -64,7 +65,8 @@ mod log_phase_handler_test {
             crate::vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                120,  // request_time (ms)
+                1000, // start_sec (simulated)
+                600,  // start_msec (simulated)
                 55,   // upstream_response_time (ms) 
                 2048, // bytes_sent
                 1024, // bytes_received
@@ -77,7 +79,8 @@ mod log_phase_handler_test {
             crate::vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                95,   // request_time (ms)
+                1000, // start_sec (simulated)
+                700,  // start_msec (simulated)
                 48,   // upstream_response_time (ms)
                 1536, // bytes_sent
                 768,  // bytes_received
@@ -135,7 +138,8 @@ mod log_phase_handler_test {
             crate::vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                0,    // 0ms request time
+                1000, // start_sec (simulated)
+                800,  // start_msec (simulated)
                 0,    // 0ms upstream time
                 100,  // bytes_sent
                 50,   // bytes_received
@@ -148,7 +152,8 @@ mod log_phase_handler_test {
             crate::vts_track_upstream_request(
                 upstream_name.as_ptr(),
                 server_addr.as_ptr(),
-                2000, // 2000ms request time (slow)
+                999,  // start_sec (simulated earlier)
+                800,  // start_msec (simulated)
                 1800, // 1800ms upstream time
                 1048576, // 1MB sent
                 2097152, // 2MB received
@@ -162,7 +167,8 @@ mod log_phase_handler_test {
                 crate::vts_track_upstream_request(
                     upstream_name.as_ptr(),
                     server_addr.as_ptr(),
-                    50,   // request_time
+                    1000, // start_sec (simulated)
+                    850,  // start_msec (simulated)
                     25,   // upstream_response_time
                     200,  // bytes_sent
                     100,  // bytes_received
