@@ -255,7 +255,6 @@ pub unsafe extern "C" fn ngx_http_vts_init_rust_module(_cf: *mut ngx_conf_t) -> 
     NGX_OK as ngx_int_t
 }
 
-
 // VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content (simplified version for now)
@@ -906,7 +905,6 @@ unsafe fn register_log_phase_handler(_cf: *mut ngx_conf_t) -> Result<(), &'stati
 
     Ok(())
 }
-
 
 /// Module context configuration
 #[no_mangle]

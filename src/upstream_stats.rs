@@ -299,7 +299,4 @@ mod tests {
         assert_eq!(zone.total_requests(), 300);
         assert_eq!(zone.total_bytes(), (3000, 1500));
     }
-
 }
-
-
