@@ -255,21 +255,6 @@ pub unsafe extern "C" fn ngx_http_vts_init_rust_module(_cf: *mut ngx_conf_t) -> 
     NGX_OK as ngx_int_t
 }
 
-/// VTS main configuration structure (simplified for now)
-#[derive(Debug)]
-#[allow(dead_code)]
-struct VtsMainConfig {
-    /// Enable VTS tracking
-    pub enabled: bool,
-}
-
-#[allow(dead_code)]
-impl VtsMainConfig {
-    fn new() -> Self {
-        Self { enabled: true }
-    }
-}
-
 // VTS status request handler that generates traffic status response
 http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     // Generate VTS status content (simplified version for now)
@@ -917,73 +902,6 @@ unsafe fn register_log_phase_handler(_cf: *mut ngx_conf_t) -> Result<(), &'stati
     // 1. nginx logging module extension that calls our C API
     // 2. Custom nginx module that wraps our Rust functionality
     // 3. Direct FFI integration when nginx-rust supports it
-
-    Ok(())
-}
-
-/// VTS LOG_PHASE handler - collects upstream statistics after request completion
-/// Based on C implementation: ngx_http_vhost_traffic_status_handler
-#[allow(dead_code)] // Used when nginx FFI bindings are fully available
-unsafe extern "C" fn ngx_http_vts_log_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
-    // Only process requests that used upstream
-    if (*r).upstream.is_null() {
-        return NGX_OK as ngx_int_t;
-    }
-
-    // Collect upstream statistics
-    if collect_upstream_request_stats(r).is_err() {
-        // Log error but don't fail the request
-        return NGX_OK as ngx_int_t;
-    }
-
-    NGX_OK as ngx_int_t
-}
-
-/// Collect upstream statistics from completed request
-/// Extracts timing, bytes, and status information from nginx request structure
-#[allow(dead_code)] // Used when nginx FFI bindings are fully available
-unsafe fn collect_upstream_request_stats(r: *mut ngx_http_request_t) -> Result<(), &'static str> {
-    let upstream = (*r).upstream;
-    if upstream.is_null() {
-        return Err("No upstream data");
-    }
-
-    // Extract upstream name (simplified - using "backend" from nginx.conf)
-    let upstream_name = "backend";
-
-    // Extract server address (simplified - using "127.0.0.1:8080" from nginx.conf)
-    let server_addr = "127.0.0.1:8080";
-
-    // Get timing information from nginx structures
-    // TODO: Fix nginx FFI access to response_time
-    let request_time = 50; // Simplified for now
-
-    let upstream_response_time = request_time / 2; // Simplified calculation
-
-    // Get byte counts
-    let bytes_sent = (*(*r).connection).sent;
-    let bytes_received = if !(*upstream).buffer.pos.is_null() && !(*upstream).buffer.last.is_null()
-    {
-        ((*upstream).buffer.last as usize - (*upstream).buffer.pos as usize) as u64
-    } else {
-        0
-    };
-
-    // Get response status
-    let status_code = (*r).headers_out.status as u16;
-
-    // Update statistics in global manager
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        manager.update_upstream_stats(
-            upstream_name,
-            server_addr,
-            request_time,
-            upstream_response_time,
-            bytes_sent.max(0) as u64, // Ensure non-negative
-            bytes_received,
-            status_code,
-        );
-    }
 
     Ok(())
 }
