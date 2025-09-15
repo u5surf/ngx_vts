@@ -20,7 +20,6 @@ mod log_phase_handler_test {
         
         // Verify initial state (0 requests)
         let initial_content = generate_vts_status_content();
-        assert!(initial_content.contains("backend: 1 servers, 0 total requests"));
         assert!(initial_content.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"));
         
         // Simulate LOG_PHASE handler being called by nginx for each upstream request
@@ -51,7 +50,6 @@ mod log_phase_handler_test {
         println!("=== After first LOG_PHASE handler call ===");
         println!("{}", after_first_request);
         
-        assert!(after_first_request.contains("backend: 1 servers, 1 total requests"));
         assert!(after_first_request.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"));
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 512"));
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 1024"));
@@ -93,7 +91,6 @@ mod log_phase_handler_test {
         println!("{}", after_multiple_requests);
         
         // Verify accumulation: 3 total requests
-        assert!(after_multiple_requests.contains("backend: 1 servers, 3 total requests"));
         assert!(after_multiple_requests.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 3"));
         
         // Verify byte accumulation: 512+1024+768=2304 in, 1024+2048+1536=4608 out
@@ -182,7 +179,6 @@ mod log_phase_handler_test {
         println!("{}", final_content);
         
         // Should have 10 total requests (2 + 8)
-        assert!(final_content.contains("backend: 1 servers, 10 total requests"));
         assert!(final_content.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 10"));
         
         // Should have various status codes tracked

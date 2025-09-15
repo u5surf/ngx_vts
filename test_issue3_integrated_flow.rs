@@ -32,11 +32,6 @@ mod issue3_integration_test {
         assert!(first_status_response.contains("# VTS Status: Active"));
         assert!(first_status_response.contains("# Module: nginx-vts-rust"));
         
-        // Key assertion: should show upstream zones with zero values (not missing zones)
-        assert!(first_status_response.contains("# Upstream Zones:"));
-        assert!(first_status_response.contains("#   backend: 1 servers, 0 total requests"));
-        assert!(first_status_response.contains("#     - 127.0.0.1:8080: 0 req, 0ms avg"));
-        assert!(first_status_response.contains("# Total Upstream Zones: 1"));
         
         // Should have all prometheus metrics with zero values
         assert!(first_status_response.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"));
@@ -74,12 +69,6 @@ mod issue3_integration_test {
         assert!(third_status_response.contains("# VTS Status: Active"));
         assert!(third_status_response.contains("# Module: nginx-vts-rust"));
         
-        // Key assertion: should show updated statistics
-        assert!(third_status_response.contains("# Upstream Zones:"));
-        assert!(third_status_response.contains("#   backend: 1 servers, 1 total requests"));
-        assert!(third_status_response.contains("#     - 127.0.0.1:8080: 1 req, 94ms avg"));
-        assert!(third_status_response.contains("1×2xx")); // Should show 1 2xx response
-        assert!(third_status_response.contains("# Total Upstream Zones: 1"));
         
         // Verify all Prometheus metrics are updated correctly
         assert!(third_status_response.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"));
@@ -139,7 +128,6 @@ mod issue3_integration_test {
         assert!(status_content.contains("127.0.0.1:8080"));
         
         // Verify vts_upstream_stats directive behavior
-        assert!(status_content.contains("# Upstream Zones:"));
         assert!(status_content.contains("nginx_vts_upstream_requests_total"));
         assert!(status_content.contains("nginx_vts_upstream_bytes_total"));
         assert!(status_content.contains("nginx_vts_upstream_response_seconds"));

@@ -25,7 +25,6 @@ mod issue2_test {
         
         // Verify that initially no upstream zones exist
         assert!(!initial_content.contains("nginx_vts_upstream_requests_total"));
-        assert!(!initial_content.contains("# Upstream Zones:"));
         
         // Should only show basic VTS info
         assert!(initial_content.contains("# nginx-vts-rust"));
@@ -75,8 +74,6 @@ mod issue2_test {
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 512"));
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 1024"));
         assert!(after_first_request.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 1"));
-        assert!(after_first_request.contains("# Upstream Zones:"));
-        assert!(after_first_request.contains("backend: 1 servers, 1 total requests"));
         
         // Simulate second request 
         update_upstream_zone_stats(
@@ -100,7 +97,6 @@ mod issue2_test {
         assert!(after_second_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 1280")); // 512 + 768
         assert!(after_second_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 2560")); // 1024 + 1536
         assert!(after_second_request.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
-        assert!(after_second_request.contains("backend: 1 servers, 2 total requests"));
         
         // Verify response time calculations (average should be updated)
         assert!(after_second_request.contains("nginx_vts_upstream_response_seconds"));

@@ -355,41 +355,6 @@ fn generate_vts_status_content() -> String {
         ));
     }
 
-    // Upstream zones information
-    if !upstream_zones.is_empty() {
-        content.push_str("# Upstream Zones:\n");
-        for (upstream_name, zone) in upstream_zones {
-            content.push_str(&format!(
-                "#   {}: {} servers, {} total requests\n",
-                upstream_name,
-                zone.servers.len(),
-                zone.total_requests()
-            ));
-
-            for (server_addr, server) in &zone.servers {
-                let status_2xx = server.responses.status_2xx;
-                let status_4xx = server.responses.status_4xx;
-                let status_5xx = server.responses.status_5xx;
-                content.push_str(&format!(
-                    "#     - {}: {} req, {}ms avg ({}×2xx, {}×4xx, {}×5xx)\n",
-                    server_addr,
-                    server.request_counter,
-                    if server.request_counter > 0 {
-                        server.request_time_total / server.request_counter
-                    } else {
-                        0
-                    },
-                    status_2xx,
-                    status_4xx,
-                    status_5xx
-                ));
-            }
-        }
-        content.push_str(&format!(
-            "# Total Upstream Zones: {}\n\n",
-            upstream_zones.len()
-        ));
-    }
 
     // Generate Prometheus metrics section
     content.push_str("# Prometheus Metrics:\n");
@@ -474,11 +439,6 @@ mod integration_tests {
         assert!(status_content.contains("# 2xx Responses: 2"));
         assert!(status_content.contains("# 4xx Responses: 1"));
 
-        // Verify upstream zones are included
-        assert!(status_content.contains("# Upstream Zones:"));
-        assert!(status_content.contains("backend_pool: 2 servers"));
-        assert!(status_content.contains("api_pool: 2 servers"));
-        assert!(status_content.contains("# Total Upstream Zones: 2"));
 
         // Verify Prometheus metrics section exists
         assert!(status_content.contains("# Prometheus Metrics:"));
@@ -526,7 +486,8 @@ mod integration_tests {
         update_upstream_zone_stats("test_backend", "10.0.0.2:80", 80, 40, 800, 400, 200);
 
         let content2 = generate_vts_status_content();
-        assert!(content2.contains("test_backend: 2 servers"));
+        // Verify metrics are present (no longer check summary format)
+        assert!(content2.contains("nginx_vts_upstream_requests_total"));
 
         // Verify metrics accumulation
         let manager = VTS_MANAGER.read().unwrap();

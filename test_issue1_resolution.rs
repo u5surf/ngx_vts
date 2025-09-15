@@ -57,10 +57,6 @@ mod issue1_test {
         assert!(status_content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"}"));
         assert!(status_content.contains("nginx_vts_upstream_server_up{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"));
         
-        // Verify that upstream zones are not empty anymore
-        assert!(status_content.contains("# Upstream Zones:"));
-        assert!(status_content.contains("backend: 1 servers, 500 total requests"));
-        assert!(status_content.contains("127.0.0.1:8080: 500 req"));
         
         // Verify basic VTS info is present
         assert!(status_content.contains("# nginx-vts-rust"));
