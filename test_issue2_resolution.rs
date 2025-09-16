@@ -8,10 +8,14 @@ mod issue2_test {
     
     #[test]
     fn test_issue2_zero_initialization() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear all existing data to simulate fresh nginx startup
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -25,7 +29,6 @@ mod issue2_test {
         
         // Verify that initially no upstream zones exist
         assert!(!initial_content.contains("nginx_vts_upstream_requests_total"));
-        assert!(!initial_content.contains("# Upstream Zones:"));
         
         // Should only show basic VTS info
         assert!(initial_content.contains("# nginx-vts-rust"));
@@ -41,10 +44,14 @@ mod issue2_test {
     
     #[test]
     fn test_issue2_dynamic_request_tracking() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear all existing data
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -75,8 +82,6 @@ mod issue2_test {
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 512"));
         assert!(after_first_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 1024"));
         assert!(after_first_request.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 1"));
-        assert!(after_first_request.contains("# Upstream Zones:"));
-        assert!(after_first_request.contains("backend: 1 servers, 1 total requests"));
         
         // Simulate second request 
         update_upstream_zone_stats(
@@ -100,7 +105,6 @@ mod issue2_test {
         assert!(after_second_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 1280")); // 512 + 768
         assert!(after_second_request.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 2560")); // 1024 + 1536
         assert!(after_second_request.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
-        assert!(after_second_request.contains("backend: 1 servers, 2 total requests"));
         
         // Verify response time calculations (average should be updated)
         assert!(after_second_request.contains("nginx_vts_upstream_response_seconds"));
@@ -108,10 +112,14 @@ mod issue2_test {
     
     #[test] 
     fn test_issue2_external_c_api() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear state
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }

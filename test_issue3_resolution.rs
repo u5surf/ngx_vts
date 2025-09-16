@@ -7,10 +7,14 @@ mod issue3_test {
     
     #[test]
     fn test_issue3_upstream_zone_initialization() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear any existing data to simulate fresh nginx startup
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -35,11 +39,6 @@ mod issue3_test {
         println!("{}", after_init_content);
         println!("=== End Test 2 ===");
         
-        // Should show the backend upstream from nginx.conf
-        assert!(after_init_content.contains("# Upstream Zones:"));
-        assert!(after_init_content.contains("backend: 1 servers, 0 total requests"));
-        // Check the actual format as generated (using × instead of x)
-        assert!(after_init_content.contains("127.0.0.1:8080: 0 req, 0ms avg"));
         
         // Should show proper Prometheus metrics for the backend upstream
         assert!(after_init_content.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"));
@@ -61,10 +60,14 @@ mod issue3_test {
     
     #[test]
     fn test_issue3_expected_response_format() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear and initialize
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -78,12 +81,6 @@ mod issue3_test {
         assert!(content.contains("# VTS Status: Active"));
         assert!(content.contains("# Module: nginx-vts-rust"));
         
-        // Should contain the upstream zones section as expected in ISSUE3.md
-        assert!(content.contains("# Upstream Zones:"));
-        assert!(content.contains("#   backend: 1 servers, 0 total requests"));
-        // Check the actual format (using × instead of x for some status codes)
-        assert!(content.contains("#     - 127.0.0.1:8080: 0 req, 0ms avg"));
-        assert!(content.contains("# Total Upstream Zones: 1"));
         
         // Should contain all Prometheus metrics from ISSUE3.md expected response
         assert!(content.contains("# HELP nginx_vts_upstream_requests_total Total upstream requests"));
@@ -100,10 +97,14 @@ mod issue3_test {
     
     #[test]
     fn test_issue3_dynamic_request_tracking() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear and initialize
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -115,7 +116,6 @@ mod issue3_test {
         println!("=== Initial Status (After nginx startup) ===");
         println!("{}", initial_status);
         
-        assert!(initial_status.contains("backend: 1 servers, 0 total requests"));
         assert!(initial_status.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"));
         
         // Simulate the second curl request: curl -I http://localhost:8081/
@@ -138,7 +138,6 @@ mod issue3_test {
         println!("{}", after_request_status);
         
         // Should show the request was processed
-        assert!(after_request_status.contains("backend: 1 servers, 1 total requests"));
         assert!(after_request_status.contains("nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"));
         assert!(after_request_status.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 615"));
         assert!(after_request_status.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 1370"));
@@ -147,9 +146,7 @@ mod issue3_test {
         // Verify response time metrics are calculated
         assert!(after_request_status.contains("nginx_vts_upstream_response_seconds"));
         
-        // Should show proper server status line with 94ms avg
-        assert!(after_request_status.contains("127.0.0.1:8080: 1 req"));
-        assert!(after_request_status.contains("94ms avg"));
-        assert!(after_request_status.contains("1×2xx")); // Should show 1 2xx response
+        // Should show proper metrics instead of summary format
+        assert!(after_request_status.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 1"));
     }
 }
