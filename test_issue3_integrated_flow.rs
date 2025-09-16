@@ -7,12 +7,16 @@ mod issue3_integration_test {
     
     #[test]
     fn test_issue3_complete_flow_simulation() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         println!("=== ISSUE3.md Complete Flow Simulation ===");
         
         // Step 1: Simulate fresh nginx startup with upstream backend configuration
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -96,7 +100,7 @@ mod issue3_integration_test {
     
     #[test]
     fn test_issue3_nginx_conf_compliance() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // This test validates that our implementation correctly interprets
         // the nginx.conf from ISSUE3.md:
@@ -114,7 +118,11 @@ mod issue3_integration_test {
         //     }
         // }
         
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }

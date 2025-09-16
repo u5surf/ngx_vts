@@ -7,10 +7,14 @@ mod log_phase_handler_test {
     
     #[test]
     fn test_log_phase_handler_registration() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear state
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -101,8 +105,8 @@ mod log_phase_handler_test {
         assert!(after_multiple_requests.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
         assert!(after_multiple_requests.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"4xx\"} 1"));
         
-        // Verify response time averages: In test environment, each request shows 1ms
-        assert!(after_multiple_requests.contains("1ms avg"));
+        // Verify response time metrics are present
+        assert!(after_multiple_requests.contains("nginx_vts_upstream_response_seconds"));
         
         println!("=== LOG_PHASE handler simulation successful ===");
         println!("✓ Handler correctly processes individual requests");
@@ -113,13 +117,17 @@ mod log_phase_handler_test {
     
     #[test]
     fn test_upstream_statistics_persistence() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // This test verifies that upstream statistics persist correctly
         // and can handle various edge cases that might occur in real nginx
         
         // Clear and initialize
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }

@@ -7,14 +7,18 @@ mod issue1_test {
     
     #[test]
     fn test_issue1_backend_upstream_statistics() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Simulate the specific scenario from ISSUE1.md:
         // - upstream backend { server 127.0.0.1:8080; }
         // - vts_upstream_stats on;
         
         // Initialize upstream statistics for the exact backend mentioned in ISSUE1.md
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             // Clear any existing data
             manager.upstream_zones.clear();
             

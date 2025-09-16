@@ -8,10 +8,14 @@ mod issue2_test {
     
     #[test]
     fn test_issue2_zero_initialization() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear all existing data to simulate fresh nginx startup
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -40,10 +44,14 @@ mod issue2_test {
     
     #[test]
     fn test_issue2_dynamic_request_tracking() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear all existing data
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
@@ -104,10 +112,14 @@ mod issue2_test {
     
     #[test] 
     fn test_issue2_external_c_api() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         
         // Clear state
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
         }
