@@ -355,7 +355,6 @@ fn generate_vts_status_content() -> String {
         ));
     }
 
-
     // Generate Prometheus metrics section
     content.push_str("# Prometheus Metrics:\n");
 
@@ -438,7 +437,6 @@ mod integration_tests {
         assert!(status_content.contains("# Total Requests: 3"));
         assert!(status_content.contains("# 2xx Responses: 2"));
         assert!(status_content.contains("# 4xx Responses: 1"));
-
 
         // Verify Prometheus metrics section exists
         assert!(status_content.contains("# Prometheus Metrics:"));
