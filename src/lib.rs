@@ -292,7 +292,9 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
 ///
 /// A formatted string containing VTS status information
 fn generate_vts_status_content() -> String {
-    let manager = VTS_MANAGER.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manager = VTS_MANAGER
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let formatter = PrometheusFormatter::new();
 
     // Get all server statistics
@@ -488,7 +490,9 @@ mod integration_tests {
         assert!(content2.contains("nginx_vts_upstream_requests_total"));
 
         // Verify metrics accumulation
-        let manager = VTS_MANAGER.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let manager = VTS_MANAGER
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let backend_zone = manager.get_upstream_zone("test_backend").unwrap();
         let server1 = backend_zone.servers.get("10.0.0.1:80").unwrap();
         assert_eq!(server1.request_counter, 2);
