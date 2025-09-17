@@ -349,8 +349,16 @@ impl PrometheusFormatter {
         ));
         for (zone, stats) in server_stats {
             output.push_str(&format!(
+                "{}server_responses_total{{zone=\"{}\",status=\"1xx\"}} {}\n",
+                self.metric_prefix, zone, stats.responses.status_1xx
+            ));
+            output.push_str(&format!(
                 "{}server_responses_total{{zone=\"{}\",status=\"2xx\"}} {}\n",
                 self.metric_prefix, zone, stats.responses.status_2xx
+            ));
+            output.push_str(&format!(
+                "{}server_responses_total{{zone=\"{}\",status=\"3xx\"}} {}\n",
+                self.metric_prefix, zone, stats.responses.status_3xx
             ));
             output.push_str(&format!(
                 "{}server_responses_total{{zone=\"{}\",status=\"4xx\"}} {}\n",

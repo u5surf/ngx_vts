@@ -286,7 +286,9 @@ impl VtsStatsManager {
                 },
                 request_times: VtsRequestTimes {
                     total: node_stats.request_time_total as f64 / 1000.0,
-                    min: 0.001, // Placeholder - should be tracked properly
+                    // TODO: Implement proper minimum request time tracking
+                    // Currently using 0.0 as placeholder since min time is not tracked in VtsNodeStats
+                    min: 0.0, 
                     max: (node_stats.request_time_max as f64) / 1000.0,
                     avg: avg_time,
                 },

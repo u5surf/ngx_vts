@@ -125,9 +125,11 @@ pub fn update_server_zone_stats(
     bytes_out: u64,
     request_time: u64,
 ) {
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        manager.update_server_stats(server_name, status, bytes_in, bytes_out, request_time);
-    }
+    let mut manager = match VTS_MANAGER.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    manager.update_server_stats(server_name, status, bytes_in, bytes_out, request_time);
 }
 
 /// Update upstream statistics
@@ -140,17 +142,19 @@ pub fn update_upstream_zone_stats(
     bytes_received: u64,
     status_code: u16,
 ) {
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        manager.update_upstream_stats(
-            upstream_name,
-            upstream_addr,
-            request_time,
-            upstream_response_time,
-            bytes_sent,
-            bytes_received,
-            status_code,
-        );
-    }
+    let mut manager = match VTS_MANAGER.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    manager.update_upstream_stats(
+        upstream_name,
+        upstream_addr,
+        request_time,
+        upstream_response_time,
+        bytes_sent,
+        bytes_received,
+        status_code,
+    );
 }
 
 /// Update connection statistics for testing
@@ -162,9 +166,11 @@ pub fn update_connection_stats(
     accepted: u64,
     handled: u64,
 ) {
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        manager.update_connection_stats(active, reading, writing, waiting, accepted, handled);
-    }
+    let mut manager = match VTS_MANAGER.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    manager.update_connection_stats(active, reading, writing, waiting, accepted, handled);
 }
 
 /// External API for tracking upstream requests dynamically
@@ -203,17 +209,19 @@ pub unsafe extern "C" fn vts_track_upstream_request(
     // Calculate request time using nginx-module-vts compatible method
     let request_time = calculate_request_time(start_sec, start_msec);
 
-    if let Ok(mut manager) = VTS_MANAGER.write() {
-        manager.update_upstream_stats(
-            upstream_name_str,
-            server_addr_str,
-            request_time,
-            upstream_response_time,
-            bytes_sent,
-            bytes_received,
-            status_code,
-        );
-    }
+    let mut manager = match VTS_MANAGER.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    manager.update_upstream_stats(
+        upstream_name_str,
+        server_addr_str,
+        request_time,
+        upstream_response_time,
+        bytes_sent,
+        bytes_received,
+        status_code,
+    );
 }
 
 /// Check if upstream statistics collection is enabled
@@ -415,9 +423,14 @@ mod integration_tests {
         // Test the integrated VTS status with upstream stats
 
         // Clear any existing data to ensure clean test state
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
+            manager.connections = Default::default();
         }
 
         // Add some sample server zone data
@@ -773,7 +786,11 @@ unsafe extern "C" fn ngx_http_set_vts_upstream_stats(
     };
 
     // Store the configuration globally (simplified approach)
-    if let Ok(mut manager) = VTS_MANAGER.write() {
+    {
+        let mut manager = match VTS_MANAGER.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         // For now, we store this in a simple way - if enabled, ensure sample data exists
         if enable {
             // Initialize sample upstream data if not already present
@@ -898,7 +915,11 @@ pub fn initialize_upstream_zones_for_testing() {
 /// Initialize upstream zones from nginx configuration  
 /// Parses nginx.conf upstream blocks and creates zero-value statistics
 unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<(), &'static str> {
-    if let Ok(mut manager) = VTS_MANAGER.write() {
+    {
+        let mut manager = match VTS_MANAGER.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         // Clear any existing data to start fresh
         manager.stats.clear();
         manager.upstream_zones.clear();
