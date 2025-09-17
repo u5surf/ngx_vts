@@ -232,56 +232,63 @@ pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
     VTS_MANAGER.read().is_ok()
 }
 
-/// Collect current nginx connection statistics
-/// This function reads nginx's actual connection state and updates VTS statistics
+/// Collect current nginx connection statistics using nginx-rust built-in features
+/// This function reads nginx's internal atomic statistics directly (same as stub_status)
 #[no_mangle]
 pub extern "C" fn vts_collect_nginx_connections() {
     #[cfg(not(test))]
     unsafe {
         use ngx::ffi::*;
 
-        // Access nginx cycle and connection information
-        let cycle = ngx_cycle;
-        if cycle.is_null() {
-            return;
+        // Access nginx's internal atomic statistics using nginx-rust features
+        // These are the same statistics used by nginx's stub_status module
+        extern "C" {
+            static ngx_stat_accepted: *const ngx_atomic_t;
+            static ngx_stat_handled: *const ngx_atomic_t;
+            static ngx_stat_active: *const ngx_atomic_t;
+            static ngx_stat_reading: *const ngx_atomic_t;
+            static ngx_stat_writing: *const ngx_atomic_t;
+            static ngx_stat_waiting: *const ngx_atomic_t;
         }
 
-        let connection_n = (*cycle).connection_n;
-        let connections = (*cycle).connections;
+        // Read atomic values - these are the actual nginx connection statistics
+        let accepted = if !ngx_stat_accepted.is_null() {
+            *ngx_stat_accepted
+        } else {
+            0
+        };
 
-        if connections.is_null() {
-            return;
-        }
+        let handled = if !ngx_stat_handled.is_null() {
+            *ngx_stat_handled
+        } else {
+            0
+        };
 
-        let mut active = 0u64;
-        let mut reading = 0u64;
-        let mut writing = 0u64;
-        let mut waiting = 0u64;
+        let active = if !ngx_stat_active.is_null() {
+            *ngx_stat_active
+        } else {
+            0
+        };
 
-        // Count active connections by state
-        for i in 0..connection_n {
-            let conn = connections.add(i);
-            if !conn.is_null() && (*conn).fd != -1 {
-                active += 1;
+        let reading = if !ngx_stat_reading.is_null() {
+            *ngx_stat_reading
+        } else {
+            0
+        };
 
-                // Classify connection state based on nginx internals
-                // This is a simplified classification
-                if (*conn).read.is_null() {
-                    waiting += 1;
-                } else if (*conn).write.is_null() {
-                    reading += 1;
-                } else {
-                    writing += 1;
-                }
-            }
-        }
+        let writing = if !ngx_stat_writing.is_null() {
+            *ngx_stat_writing
+        } else {
+            0
+        };
 
-        // Get total accepted/handled connections from nginx statistics
-        // nginx keeps these in ngx_connection_counter (if available)
-        let accepted = active; // Simplified - would need actual nginx stats
-        let handled = active; // Simplified - would need actual nginx stats
+        let waiting = if !ngx_stat_waiting.is_null() {
+            *ngx_stat_waiting
+        } else {
+            0
+        };
 
-        // Update VTS connection statistics
+        // Update VTS connection statistics with actual nginx data
         {
             let mut manager = match VTS_MANAGER.write() {
                 Ok(guard) => guard,
@@ -303,10 +310,20 @@ pub extern "C" fn vts_collect_nginx_connections() {
 }
 
 /// Update VTS statistics from nginx (to be called periodically)
-/// This should be called from nginx worker process periodically
+/// This should be called from nginx worker process periodically to collect
+/// all types of statistics including connections, server zones, and upstream data
 #[no_mangle]
 pub extern "C" fn vts_update_statistics() {
+    // Collect nginx connection statistics
     vts_collect_nginx_connections();
+
+    // Note: Server zone statistics are updated automatically when requests are processed
+    // via update_server_zone_stats() calls from nginx request processing
+
+    // Note: Upstream statistics are updated automatically when upstream requests complete
+    // via vts_update_upstream_stats_ffi() calls from nginx upstream processing
+
+    // Future: Could add periodic collection of other nginx internal statistics here
 }
 
 /// Get VTS status content for C integration
