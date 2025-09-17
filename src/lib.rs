@@ -8,7 +8,6 @@ use ngx::core::Buffer;
 use ngx::ffi::*;
 use ngx::http::HttpModuleLocationConf;
 use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
-use std::collections::HashMap;
 use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, RwLock};
 
@@ -151,6 +150,20 @@ pub fn update_upstream_zone_stats(
             bytes_received,
             status_code,
         );
+    }
+}
+
+/// Update connection statistics for testing
+pub fn update_connection_stats(
+    active: u64,
+    reading: u64,
+    writing: u64,
+    waiting: u64,
+    accepted: u64,
+    handled: u64,
+) {
+    if let Ok(mut manager) = VTS_MANAGER.write() {
+        manager.update_connection_stats(active, reading, writing, waiting, accepted, handled);
     }
 }
 
@@ -360,16 +373,19 @@ fn generate_vts_status_content() -> String {
     // Generate Prometheus metrics section
     content.push_str("# Prometheus Metrics:\n");
 
+    // Always add nginx info metric
+    let info_metrics = formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION"));
+    content.push_str(&info_metrics);
+
+    // Add connection statistics
+    let connection_metrics = formatter.format_connection_stats(manager.get_connection_stats());
+    content.push_str(&connection_metrics);
+
     // Generate server zone metrics if available
-    if !server_stats.is_empty() {
-        // Convert server stats to format expected by PrometheusFormatter
-        // Note: This is a simplified conversion - in production you'd want proper conversion
-        let mut prometheus_stats = HashMap::new();
-        for (zone, stats) in &server_stats {
-            prometheus_stats.insert(zone.clone(), stats.clone());
-        }
-        content.push_str("# Server Zone Metrics:\n");
-        content.push_str(&format!("# (Server zones: {})\n", prometheus_stats.len()));
+    let server_zone_stats = manager.get_all_server_stats();
+    if !server_zone_stats.is_empty() {
+        let server_metrics = formatter.format_server_stats(&server_zone_stats);
+        content.push_str(&server_metrics);
     }
 
     // Generate upstream metrics
@@ -377,17 +393,12 @@ fn generate_vts_status_content() -> String {
         let upstream_metrics = formatter.format_upstream_stats(upstream_zones);
         content.push_str(&upstream_metrics);
     } else {
-        // When no upstream zones exist, show appropriate placeholder metrics
-        content.push_str(&format!(
-            "# HELP nginx_vts_info Nginx VTS module information\n\
-             # TYPE nginx_vts_info gauge\n\
-             nginx_vts_info{{version=\"{}\"}} 1\n\
-             \n\
-             # HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
+        // Add placeholder metric for when no upstream zones exist
+        content.push_str(
+            "# HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
              # TYPE nginx_vts_upstream_zones_total gauge\n\
-             nginx_vts_upstream_zones_total 0\n",
-            env!("CARGO_PKG_VERSION")
-        ));
+             nginx_vts_upstream_zones_total 0\n\n"
+        );
     }
 
     content
@@ -457,15 +468,86 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_issue6_complete_metrics_output() {
+        // Clear any existing data
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            manager.stats.clear();
+            manager.upstream_zones.clear();
+            manager.connections = Default::default();
+        }
+
+        // Set up test data similar to ISSUE6.md requirements
+        update_connection_stats(1, 0, 1, 0, 16, 16);
+        update_server_zone_stats("example.com", 200, 50000, 2000000, 125);
+        update_server_zone_stats("example.com", 404, 5000, 100000, 50);
+        update_upstream_zone_stats("backend", "10.0.0.1:8080", 50, 25, 750000, 250000, 200);
+        update_upstream_zone_stats("backend", "10.0.0.2:8080", 60, 30, 680000, 230000, 200);
+        update_upstream_zone_stats(
+            "api_backend",
+            "192.168.1.10:9090",
+            80,
+            40,
+            400000,
+            200000,
+            200,
+        );
+
+        let content = generate_vts_status_content();
+
+        println!("=== ISSUE6 Complete Metrics Output ===");
+        println!("{}", content);
+        println!("=== End ISSUE6 Output ===");
+
+        // Verify nginx_vts_info metric
+        assert!(content.contains("# HELP nginx_vts_info Nginx VTS module information"));
+        assert!(content.contains("# TYPE nginx_vts_info gauge"));
+        assert!(content.contains("nginx_vts_info{hostname="));
+
+        // Verify connection metrics
+        assert!(content.contains("# HELP nginx_vts_connections Current nginx connections"));
+        assert!(content.contains("nginx_vts_connections{state=\"active\"} 1"));
+        assert!(content.contains("nginx_vts_connections{state=\"writing\"} 1"));
+        assert!(content.contains("nginx_vts_connections_total{state=\"accepted\"} 16"));
+        assert!(content.contains("nginx_vts_connections_total{state=\"handled\"} 16"));
+
+        // Verify server zone metrics
+        assert!(content.contains("# HELP nginx_vts_server_requests_total Total number of requests"));
+        assert!(content.contains("nginx_vts_server_requests_total{zone=\"example.com\"}"));
+        assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
+        assert!(
+            content.contains("nginx_vts_server_bytes_total{zone=\"example.com\",direction=\"in\"}")
+        );
+        assert!(content
+            .contains("nginx_vts_server_bytes_total{zone=\"example.com\",direction=\"out\"}"));
+
+        // Verify upstream metrics are still present
+        assert!(content.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"10.0.0.1:8080\"}"
+        ));
+        assert!(content.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.1.10:9090\"}"));
+    }
+
+    #[test]
     fn test_vts_stats_persistence() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap();
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Test that stats persist across multiple updates
 
         // Clear any existing data to ensure clean test state
-        if let Ok(mut manager) = VTS_MANAGER.write() {
+        {
+            let mut manager = match VTS_MANAGER.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             manager.stats.clear();
             manager.upstream_zones.clear();
+            manager.connections = Default::default();
         }
 
         let initial_content = generate_vts_status_content();

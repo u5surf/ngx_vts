@@ -4,6 +4,7 @@
 //! using nginx's shared memory and red-black tree data structures, similar to the original
 //! nginx-module-vts implementation.
 
+use crate::stats::{VtsConnectionStats, VtsRequestTimes, VtsResponseStats, VtsServerStats};
 use crate::upstream_stats::UpstreamZone;
 #[cfg(not(test))]
 use ngx::ffi::ngx_time;
@@ -141,6 +142,9 @@ pub struct VtsStatsManager {
 
     /// Upstream zones statistics storage
     pub upstream_zones: HashMap<String, UpstreamZone>,
+
+    /// Connection statistics
+    pub connections: VtsConnectionStats,
 }
 
 #[allow(dead_code)]
@@ -150,6 +154,7 @@ impl VtsStatsManager {
         Self {
             stats: HashMap::new(),
             upstream_zones: HashMap::new(),
+            connections: VtsConnectionStats::default(),
         }
     }
 
@@ -232,6 +237,66 @@ impl VtsStatsManager {
         self.upstream_zones
             .entry(upstream_name.to_string())
             .or_insert_with(|| UpstreamZone::new(upstream_name))
+    }
+
+    /// Update connection statistics
+    pub fn update_connection_stats(
+        &mut self,
+        active: u64,
+        reading: u64,
+        writing: u64,
+        waiting: u64,
+        accepted: u64,
+        handled: u64,
+    ) {
+        self.connections.active = active;
+        self.connections.reading = reading;
+        self.connections.writing = writing;
+        self.connections.waiting = waiting;
+        self.connections.accepted = accepted;
+        self.connections.handled = handled;
+    }
+
+    /// Get connection statistics
+    pub fn get_connection_stats(&self) -> &VtsConnectionStats {
+        &self.connections
+    }
+
+    /// Get all server statistics in format compatible with PrometheusFormatter
+    pub fn get_all_server_stats(&self) -> HashMap<String, VtsServerStats> {
+        let mut server_stats = HashMap::new();
+
+        for (zone_name, node_stats) in &self.stats {
+            let avg_time = if node_stats.requests > 0 {
+                (node_stats.request_time_total as f64) / (node_stats.requests as f64) / 1000.0
+            } else {
+                0.0
+            };
+
+            let server_stat = VtsServerStats {
+                requests: node_stats.requests,
+                bytes_in: node_stats.bytes_in,
+                bytes_out: node_stats.bytes_out,
+                responses: VtsResponseStats {
+                    status_1xx: node_stats.status_1xx,
+                    status_2xx: node_stats.status_2xx,
+                    status_3xx: node_stats.status_3xx,
+                    status_4xx: node_stats.status_4xx,
+                    status_5xx: node_stats.status_5xx,
+                },
+                request_times: VtsRequestTimes {
+                    total: node_stats.request_time_total as f64 / 1000.0,
+                    min: 0.001, // Placeholder - should be tracked properly
+                    max: (node_stats.request_time_max as f64) / 1000.0,
+                    avg: avg_time,
+                },
+                last_updated: node_stats.last_request_time,
+            };
+
+            server_stats.insert(zone_name.clone(), server_stat);
+        }
+
+        server_stats
     }
 }
 

@@ -63,13 +63,20 @@ pub struct VtsCacheStats {
     pub scarce: u64,
 }
 
+/// Connection statistics for nginx
 #[derive(Debug, Clone, Default)]
 pub struct VtsConnectionStats {
+    /// Currently active connections
     pub active: u64,
+    /// Connections reading request headers
     pub reading: u64,
+    /// Connections writing response data
     pub writing: u64,
+    /// Idle connections waiting for requests
     pub waiting: u64,
+    /// Total accepted connections
     pub accepted: u64,
+    /// Total handled connections
     pub handled: u64,
 }
 

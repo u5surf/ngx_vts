@@ -4,6 +4,7 @@
 //! metrics format, including upstream server statistics, cache statistics,
 //! and general server zone metrics.
 
+use crate::stats::{VtsConnectionStats, VtsServerStats};
 use crate::upstream_stats::UpstreamZone;
 use std::collections::HashMap;
 
@@ -222,6 +223,172 @@ impl PrometheusFormatter {
             }
         }
         output.push('\n');
+    }
+
+    /// Format nginx basic info metrics into Prometheus format
+    pub fn format_nginx_info(&self, hostname: &str, version: &str) -> String {
+        let mut output = String::new();
+
+        output.push_str(&format!(
+            "# HELP {}info Nginx VTS module information\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!("# TYPE {}info gauge\n", self.metric_prefix));
+        output.push_str(&format!(
+            "{}info{{hostname=\"{}\",version=\"{}\"}} 1\n\n",
+            self.metric_prefix, hostname, version
+        ));
+
+        output
+    }
+
+    /// Format connection statistics into Prometheus metrics
+    pub fn format_connection_stats(&self, connections: &VtsConnectionStats) -> String {
+        let mut output = String::new();
+
+        // Current connections
+        output.push_str(&format!(
+            "# HELP {}connections Current nginx connections\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!("# TYPE {}connections gauge\n", self.metric_prefix));
+        output.push_str(&format!(
+            "{}connections{{state=\"active\"}} {}\n",
+            self.metric_prefix, connections.active
+        ));
+        output.push_str(&format!(
+            "{}connections{{state=\"reading\"}} {}\n",
+            self.metric_prefix, connections.reading
+        ));
+        output.push_str(&format!(
+            "{}connections{{state=\"writing\"}} {}\n",
+            self.metric_prefix, connections.writing
+        ));
+        output.push_str(&format!(
+            "{}connections{{state=\"waiting\"}} {}\n",
+            self.metric_prefix, connections.waiting
+        ));
+        output.push('\n');
+
+        // Total connections
+        output.push_str(&format!(
+            "# HELP {}connections_total Total nginx connections\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}connections_total counter\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "{}connections_total{{state=\"accepted\"}} {}\n",
+            self.metric_prefix, connections.accepted
+        ));
+        output.push_str(&format!(
+            "{}connections_total{{state=\"handled\"}} {}\n",
+            self.metric_prefix, connections.handled
+        ));
+        output.push('\n');
+
+        output
+    }
+
+    /// Format server zone statistics into Prometheus metrics
+    pub fn format_server_stats(&self, server_stats: &HashMap<String, VtsServerStats>) -> String {
+        let mut output = String::new();
+
+        if server_stats.is_empty() {
+            return output;
+        }
+
+        // Server requests total
+        output.push_str(&format!(
+            "# HELP {}server_requests_total Total number of requests\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}server_requests_total counter\n",
+            self.metric_prefix
+        ));
+        for (zone, stats) in server_stats {
+            output.push_str(&format!(
+                "{}server_requests_total{{zone=\"{}\"}} {}\n",
+                self.metric_prefix, zone, stats.requests
+            ));
+        }
+        output.push('\n');
+
+        // Server bytes total
+        output.push_str(&format!(
+            "# HELP {}server_bytes_total Total bytes transferred\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}server_bytes_total counter\n",
+            self.metric_prefix
+        ));
+        for (zone, stats) in server_stats {
+            output.push_str(&format!(
+                "{}server_bytes_total{{zone=\"{}\",direction=\"in\"}} {}\n",
+                self.metric_prefix, zone, stats.bytes_in
+            ));
+            output.push_str(&format!(
+                "{}server_bytes_total{{zone=\"{}\",direction=\"out\"}} {}\n",
+                self.metric_prefix, zone, stats.bytes_out
+            ));
+        }
+        output.push('\n');
+
+        // Server responses total
+        output.push_str(&format!(
+            "# HELP {}server_responses_total Total responses by status code\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}server_responses_total counter\n",
+            self.metric_prefix
+        ));
+        for (zone, stats) in server_stats {
+            output.push_str(&format!(
+                "{}server_responses_total{{zone=\"{}\",status=\"2xx\"}} {}\n",
+                self.metric_prefix, zone, stats.responses.status_2xx
+            ));
+            output.push_str(&format!(
+                "{}server_responses_total{{zone=\"{}\",status=\"4xx\"}} {}\n",
+                self.metric_prefix, zone, stats.responses.status_4xx
+            ));
+            output.push_str(&format!(
+                "{}server_responses_total{{zone=\"{}\",status=\"5xx\"}} {}\n",
+                self.metric_prefix, zone, stats.responses.status_5xx
+            ));
+        }
+        output.push('\n');
+
+        // Server request seconds
+        output.push_str(&format!(
+            "# HELP {}server_request_seconds Request processing time\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}server_request_seconds gauge\n",
+            self.metric_prefix
+        ));
+        for (zone, stats) in server_stats {
+            output.push_str(&format!(
+                "{}server_request_seconds{{zone=\"{}\",type=\"avg\"}} {:.6}\n",
+                self.metric_prefix, zone, stats.request_times.avg
+            ));
+            output.push_str(&format!(
+                "{}server_request_seconds{{zone=\"{}\",type=\"min\"}} {:.6}\n",
+                self.metric_prefix, zone, stats.request_times.min
+            ));
+            output.push_str(&format!(
+                "{}server_request_seconds{{zone=\"{}\",type=\"max\"}} {:.6}\n",
+                self.metric_prefix, zone, stats.request_times.max
+            ));
+        }
+        output.push('\n');
+
+        output
     }
 }
 
