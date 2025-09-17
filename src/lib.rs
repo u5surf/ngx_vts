@@ -397,7 +397,7 @@ fn generate_vts_status_content() -> String {
         content.push_str(
             "# HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
              # TYPE nginx_vts_upstream_zones_total gauge\n\
-             nginx_vts_upstream_zones_total 0\n\n"
+             nginx_vts_upstream_zones_total 0\n\n",
         );
     }
 
