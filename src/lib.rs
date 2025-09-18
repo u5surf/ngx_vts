@@ -302,6 +302,35 @@ pub extern "C" fn vts_collect_nginx_connections() {
     }
 }
 
+/// Update server zone statistics from nginx request processing
+/// This should be called from nginx log phase for each request
+///
+/// # Safety
+///
+/// The `server_name` pointer must be a valid null-terminated C string.
+/// The caller must ensure the pointer remains valid for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn vts_update_server_stats_ffi(
+    server_name: *const c_char,
+    status: u16,
+    bytes_in: u64,
+    bytes_out: u64,
+    request_time: u64,
+) {
+    if server_name.is_null() {
+        return;
+    }
+
+    unsafe {
+        let server_name_str = match std::ffi::CStr::from_ptr(server_name).to_str() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        update_server_zone_stats(server_name_str, status, bytes_in, bytes_out, request_time);
+    }
+}
+
 /// Update VTS statistics from nginx (to be called periodically)
 /// This should be called from nginx worker process periodically to collect
 /// all types of statistics including connections, server zones, and upstream data
@@ -311,7 +340,7 @@ pub extern "C" fn vts_update_statistics() {
     vts_collect_nginx_connections();
 
     // Note: Server zone statistics are updated automatically when requests are processed
-    // via update_server_zone_stats() calls from nginx request processing
+    // via vts_update_server_stats_ffi() calls from nginx request processing
 
     // Note: Upstream statistics are updated automatically when upstream requests complete
     // via vts_update_upstream_stats_ffi() calls from nginx upstream processing
@@ -327,7 +356,7 @@ pub extern "C" fn vts_update_statistics() {
 /// The returned pointer is valid until the next call to this function.
 /// The caller must not free the returned pointer.
 #[no_mangle]
-pub extern "C" fn ngx_http_vts_get_status() -> *const c_char {
+pub unsafe extern "C" fn ngx_http_vts_get_status() -> *const c_char {
     use std::sync::Mutex;
 
     static STATUS_CACHE: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
