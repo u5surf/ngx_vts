@@ -415,9 +415,6 @@ fn generate_vts_status_content() -> String {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let formatter = PrometheusFormatter::new();
 
-    // Get all server statistics
-    let server_stats = manager.get_all_stats();
-
     // Get all upstream statistics
     let upstream_zones = manager.get_all_upstream_zones();
 
@@ -437,43 +434,6 @@ fn generate_vts_status_content() -> String {
         get_hostname(),
         get_current_time()
     ));
-
-    // Server zones information
-    if !server_stats.is_empty() {
-        content.push_str("# Server Zones:\n");
-        let mut total_requests = 0u64;
-        let mut total_2xx = 0u64;
-        let mut total_4xx = 0u64;
-        let mut total_5xx = 0u64;
-
-        for (zone, stats) in &server_stats {
-            content.push_str(&format!(
-                "#   {}: {} requests, {:.2}ms avg response time\n",
-                zone,
-                stats.requests,
-                stats.avg_request_time()
-            ));
-
-            total_requests += stats.requests;
-            total_2xx += stats.status_2xx;
-            total_4xx += stats.status_4xx;
-            total_5xx += stats.status_5xx;
-        }
-
-        content.push_str(&format!(
-            "# Total Server Zones: {}\n\
-             # Total Requests: {}\n\
-             # 2xx Responses: {}\n\
-             # 4xx Responses: {}\n\
-             # 5xx Responses: {}\n\
-             \n",
-            server_stats.len(),
-            total_requests,
-            total_2xx,
-            total_4xx,
-            total_5xx
-        ));
-    }
 
     // Generate Prometheus metrics section
     content.push_str("# Prometheus Metrics:\n");
@@ -552,16 +512,8 @@ mod integration_tests {
         assert!(status_content.contains("# nginx-vts-rust"));
         assert!(status_content.contains("# VTS Status: Active"));
 
-        // Verify server zones are included
-        assert!(status_content.contains("# Server Zones:"));
-        assert!(status_content.contains("example.com: 2 requests"));
-        assert!(status_content.contains("api.example.com: 1 requests"));
-
-        // Verify total counters
-        assert!(status_content.contains("# Total Server Zones: 2"));
-        assert!(status_content.contains("# Total Requests: 3"));
-        assert!(status_content.contains("# 2xx Responses: 2"));
-        assert!(status_content.contains("# 4xx Responses: 1"));
+        // Server zones information is now only in Prometheus metrics
+        // (removed duplicate summary section)
 
         // Verify Prometheus metrics section exists
         assert!(status_content.contains("# Prometheus Metrics:"));
