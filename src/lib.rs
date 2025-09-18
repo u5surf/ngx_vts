@@ -321,14 +321,12 @@ pub unsafe extern "C" fn vts_update_server_stats_ffi(
         return;
     }
 
-    unsafe {
-        let server_name_str = match std::ffi::CStr::from_ptr(server_name).to_str() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+    let server_name_str = match std::ffi::CStr::from_ptr(server_name).to_str() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
 
-        update_server_zone_stats(server_name_str, status, bytes_in, bytes_out, request_time);
-    }
+    update_server_zone_stats(server_name_str, status, bytes_in, bytes_out, request_time);
 }
 
 /// Update VTS statistics from nginx (to be called periodically)
