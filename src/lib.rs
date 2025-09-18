@@ -506,7 +506,7 @@ mod integration_tests {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            
+
             // Complete reset to ensure deterministic test state
             *manager = VtsStatsManager::new();
         }
@@ -520,12 +520,44 @@ mod integration_tests {
         update_server_zone_stats("test1-api.example.com", 200, 2048, 4096, 200);
 
         // Add some upstream stats with unique identifiers for this test
-        update_upstream_zone_stats("test1-backend_pool", "192.168.1.10:80", 100, 50, 1500, 800, 200);
-        update_upstream_zone_stats("test1-backend_pool", "192.168.1.11:80", 150, 75, 2000, 1000, 200);
-        update_upstream_zone_stats("test1-backend_pool", "192.168.1.10:80", 120, 60, 1200, 600, 404);
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.10:80",
+            100,
+            50,
+            1500,
+            800,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.11:80",
+            150,
+            75,
+            2000,
+            1000,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.10:80",
+            120,
+            60,
+            1200,
+            600,
+            404,
+        );
 
         update_upstream_zone_stats("test1-api_pool", "192.168.2.10:8080", 80, 40, 800, 400, 200);
-        update_upstream_zone_stats("test1-api_pool", "192.168.2.11:8080", 300, 200, 3000, 1500, 500);
+        update_upstream_zone_stats(
+            "test1-api_pool",
+            "192.168.2.11:8080",
+            300,
+            200,
+            3000,
+            1500,
+            500,
+        );
 
         // Generate VTS status content
         let status_content = generate_vts_status_content();
@@ -558,7 +590,7 @@ mod integration_tests {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-            
+
         // Create completely fresh manager state for this test
         {
             let mut manager = match VTS_MANAGER.write() {
@@ -572,8 +604,24 @@ mod integration_tests {
         update_connection_stats(1, 0, 1, 0, 16, 16);
         update_server_zone_stats("test2-example.com", 200, 50000, 2000000, 125);
         update_server_zone_stats("test2-example.com", 404, 5000, 100000, 50);
-        update_upstream_zone_stats("test2-backend", "10.0.0.1:8080", 50, 25, 750000, 250000, 200);
-        update_upstream_zone_stats("test2-backend", "10.0.0.2:8080", 60, 30, 680000, 230000, 200);
+        update_upstream_zone_stats(
+            "test2-backend",
+            "10.0.0.1:8080",
+            50,
+            25,
+            750000,
+            250000,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test2-backend",
+            "10.0.0.2:8080",
+            60,
+            30,
+            680000,
+            230000,
+            200,
+        );
         update_upstream_zone_stats(
             "test2-api_backend",
             "192.168.1.10:9090",
@@ -606,11 +654,11 @@ mod integration_tests {
         assert!(content.contains("# HELP nginx_vts_server_requests_total Total number of requests"));
         assert!(content.contains("nginx_vts_server_requests_total{zone=\"test2-example.com\"}"));
         assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
-        assert!(
-            content.contains("nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"in\"}")
-        );
         assert!(content
-            .contains("nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"out\"}"));
+            .contains("nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"in\"}"));
+        assert!(content.contains(
+            "nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"out\"}"
+        ));
 
         // Verify upstream metrics are still present with test-unique identifiers
         assert!(content.contains(
