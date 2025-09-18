@@ -439,12 +439,10 @@ fn generate_vts_status_content() -> String {
     let connection_metrics = formatter.format_connection_stats(manager.get_connection_stats());
     content.push_str(&connection_metrics);
 
-    // Generate server zone metrics if available
+    // Generate server zone metrics (always output, even if empty)
     let server_zone_stats = manager.get_all_server_stats();
-    if !server_zone_stats.is_empty() {
-        let server_metrics = formatter.format_server_stats(&server_zone_stats);
-        content.push_str(&server_metrics);
-    }
+    let server_metrics = formatter.format_server_stats(&server_zone_stats);
+    content.push_str(&server_metrics);
 
     // Generate upstream metrics
     if !upstream_zones.is_empty() {
@@ -650,6 +648,12 @@ mod integration_tests {
         assert!(content.contains("# nginx-vts-rust"));
         assert!(content.contains("# VTS Status: Active"));
         assert!(content.contains("# Prometheus Metrics:"));
+
+        // Should always output server metrics headers, even if no data
+        assert!(content.contains("# HELP nginx_vts_server_requests_total Total number of requests"));
+        assert!(content.contains("# TYPE nginx_vts_server_requests_total counter"));
+        assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
+        assert!(content.contains("# TYPE nginx_vts_server_bytes_total counter"));
     }
 }
 

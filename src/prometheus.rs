@@ -296,10 +296,6 @@ impl PrometheusFormatter {
     pub fn format_server_stats(&self, server_stats: &HashMap<String, VtsServerStats>) -> String {
         let mut output = String::new();
 
-        if server_stats.is_empty() {
-            return output;
-        }
-
         // Server requests total
         output.push_str(&format!(
             "# HELP {}server_requests_total Total number of requests\n",
