@@ -125,11 +125,9 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
 
     // Calculate total request time in milliseconds using nginx's builtin calculation
     ngx_msec_t request_time = 0;
-    if (r->connection->log->action) {
-        // Use nginx's internal request timing if available
-        ngx_time_t *tp = ngx_timeofday();
-        request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
-    }
+    // Always calculate request time using request start time
+    ngx_time_t *tp = ngx_timeofday();
+    request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
     
     // Get response status (use r->headers_out.status if available, otherwise default)
     ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : status_code;
