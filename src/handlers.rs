@@ -16,7 +16,11 @@ use std::ptr;
 pub struct VtsHandler;
 
 impl VtsHandler {
-    pub extern "C" fn vts_status_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
+    /// # Safety
+    ///
+    /// The `r` pointer must be a valid nginx request pointer.
+    /// The caller must ensure the pointer remains valid for the duration of this call.
+    pub unsafe extern "C" fn vts_status_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
         unsafe {
             // TODO: Fix nginx module integration
             // let loc_conf = ngx_http_get_module_loc_conf(r, &crate::ngx_http_vts_module as *const _ as *mut _) as *mut VtsConfig;

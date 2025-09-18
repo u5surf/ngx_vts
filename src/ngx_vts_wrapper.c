@@ -21,6 +21,15 @@ extern void vts_track_upstream_request(
     uint16_t status_code
 );
 
+// External Rust functions
+extern void vts_update_server_stats_ffi(
+    const char* server_name,
+    uint16_t status,
+    uint64_t bytes_in,
+    uint64_t bytes_out,
+    uint64_t request_time
+);
+
 // External Rust initialization function  
 extern ngx_int_t ngx_http_vts_init_rust_module(ngx_conf_t *cf);
 
@@ -104,21 +113,62 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         ngx_cpystrn(server_addr_buf, (u_char*)"unknown", sizeof(server_addr_buf));
     }
 
-    // Call Rust function to update statistics
+    // Update server zone statistics for all requests
+    u_char server_name_buf[256];
+    ngx_str_t *server_name = &r->headers_in.server;
+    if (server_name->len > 0 && server_name->len < sizeof(server_name_buf) - 1) {
+        ngx_memcpy(server_name_buf, server_name->data, server_name->len);
+        server_name_buf[server_name->len] = '\0';
+    } else {
+        ngx_cpystrn(server_name_buf, (u_char*)"_", sizeof(server_name_buf));
+    }
+
+    // Calculate total request time in milliseconds using nginx's builtin calculation
+    ngx_msec_t request_time = 0;
+    // Always calculate request time using request start time
+    ngx_time_t *tp = ngx_timeofday();
+    request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
+    
+    // Get response status (use r->headers_out.status if available, otherwise default)
+    ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : status_code;
+    if (response_status == 0) {
+        response_status = 200; // Default to 200 if no status available
+    }
+
+    // Calculate bytes sent and received for this request
+    off_t bytes_in = r->request_length;
+    off_t bytes_out = r->connection->sent;
+    
+    // Call Rust function to update server zone statistics
     ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                  "VTS LOG_PHASE: Calling vts_track_upstream_request - upstream: %s, server: %s, status: %d",
-                  upstream_name_buf, server_addr_buf, status_code);
-                  
-    vts_track_upstream_request(
-        (const char*)upstream_name_buf,
-        (const char*)server_addr_buf,
-        (uint64_t)r->start_sec,
-        (uint64_t)r->start_msec,
-        (uint64_t)upstream_response_time,
-        (uint64_t)bytes_sent,
-        (uint64_t)bytes_received,
-        (uint16_t)status_code
+                  "VTS LOG_PHASE: Updating server stats - server: %s, status: %d, bytes_in: %O, bytes_out: %O",
+                  server_name_buf, response_status, bytes_in, bytes_out);
+
+    vts_update_server_stats_ffi(
+        (const char*)server_name_buf,
+        (uint16_t)response_status,
+        (uint64_t)bytes_in,
+        (uint64_t)bytes_out,
+        (uint64_t)request_time
     );
+
+    // Call Rust function to update upstream statistics (if upstream exists)
+    if (upstream_name.len > 0) {
+        ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
+                      "VTS LOG_PHASE: Calling vts_track_upstream_request - upstream: %s, server: %s, status: %d",
+                      upstream_name_buf, server_addr_buf, status_code);
+                      
+        vts_track_upstream_request(
+            (const char*)upstream_name_buf,
+            (const char*)server_addr_buf,
+            (uint64_t)r->start_sec,
+            (uint64_t)r->start_msec,
+            (uint64_t)upstream_response_time,
+            (uint64_t)bytes_sent,
+            (uint64_t)bytes_received,
+            (uint16_t)status_code
+        );
+    }
     
     ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
                   "VTS LOG_PHASE: vts_track_upstream_request completed");
