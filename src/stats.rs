@@ -191,29 +191,6 @@ impl VtsStatsManager {
         }
     }
 
-    pub fn init_shared_memory(&mut self, cf: *mut ngx_conf_t) -> Result<(), &'static str> {
-        unsafe {
-            let _pool = (*cf).pool;
-            let mut name = ngx_string!("vts_stats_zone");
-            let size = 1024 * 1024; // 1MB shared memory
-
-            let shm_zone = ngx_shared_memory_add(
-                cf,
-                &mut name,
-                size,
-                &raw const crate::ngx_http_vts_module as *const _ as *mut _,
-            );
-            if shm_zone.is_null() {
-                return Err("Failed to allocate shared memory zone");
-            }
-
-            (*shm_zone).init = Some(vts_init_shm_zone);
-            (*shm_zone).data = self as *mut _ as *mut c_void;
-            self.shared_zone = Some(shm_zone);
-        }
-        Ok(())
-    }
-
     pub fn update_request_stats(
         &self,
         server_name: &str,
@@ -258,11 +235,3 @@ impl VtsStatsManager {
 
 unsafe impl Send for VtsStatsManager {}
 unsafe impl Sync for VtsStatsManager {}
-
-// Shared memory zone initialization callback
-extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, _data: *mut c_void) -> ngx_int_t {
-    // Initialize shared memory structures here
-    // _data parameter added to match expected signature
-    let _ = shm_zone; // Suppress unused warning
-    NGX_OK as ngx_int_t
-}
