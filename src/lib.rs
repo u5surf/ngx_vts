@@ -515,7 +515,9 @@ mod integration_tests {
 
     #[test]
     fn test_integrated_vts_status_functionality() {
-        let _lock = GLOBAL_VTS_TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Test the integrated VTS status with upstream stats
 
