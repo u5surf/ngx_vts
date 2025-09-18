@@ -31,16 +31,7 @@
   vts_upstream_stats on;
   ```
 
-### 4. `vts_filter` ✅ **NEW**
-- **Context**: `http`, `server`, `location`
-- **Syntax**: `vts_filter on|off;`
-- **Description**: Enables/disables filtering functionality
-- **Example**:
-  ```nginx
-  vts_filter on;
-  ```
-
-### 5. `vts_upstream_zone` ✅ **NEW**
+### 4. `vts_upstream_zone` ✅ **NEW**
 - **Context**: `upstream`
 - **Syntax**: `vts_upstream_zone zone_name;`
 - **Description**: Sets upstream zone name for statistics tracking
@@ -54,7 +45,7 @@
 
 ## Test Status
 
-✅ **Directives Implemented**: All 5 core VTS directives  
+✅ **Directives Implemented**: All 4 core VTS directives  
 ✅ **Build Status**: Successfully compiles  
 ✅ **Module Registration**: Directives registered with nginx  
 ⏳ **Runtime Testing**: Requires nginx integration  
