@@ -500,32 +500,64 @@ mod integration_tests {
 
         // Test the integrated VTS status with upstream stats
 
-        // Clear any existing data to ensure clean test state
+        // Create completely fresh manager state for this test to avoid race conditions
         {
             let mut manager = match VTS_MANAGER.write() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            manager.stats.clear();
-            manager.upstream_zones.clear();
-            manager.connections = Default::default();
+
+            // Complete reset to ensure deterministic test state
+            *manager = VtsStatsManager::new();
         }
 
         // Set up connection statistics for the test
         update_connection_stats(1, 0, 1, 0, 16, 16);
 
-        // Add some sample server zone data
-        update_server_zone_stats("example.com", 200, 1024, 2048, 150);
-        update_server_zone_stats("example.com", 404, 512, 256, 80);
-        update_server_zone_stats("api.example.com", 200, 2048, 4096, 200);
+        // Add some sample server zone data with unique identifiers for this test
+        update_server_zone_stats("test1-example.com", 200, 1024, 2048, 150);
+        update_server_zone_stats("test1-example.com", 404, 512, 256, 80);
+        update_server_zone_stats("test1-api.example.com", 200, 2048, 4096, 200);
 
-        // Add some upstream stats
-        update_upstream_zone_stats("backend_pool", "192.168.1.10:80", 100, 50, 1500, 800, 200);
-        update_upstream_zone_stats("backend_pool", "192.168.1.11:80", 150, 75, 2000, 1000, 200);
-        update_upstream_zone_stats("backend_pool", "192.168.1.10:80", 120, 60, 1200, 600, 404);
+        // Add some upstream stats with unique identifiers for this test
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.10:80",
+            100,
+            50,
+            1500,
+            800,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.11:80",
+            150,
+            75,
+            2000,
+            1000,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test1-backend_pool",
+            "192.168.1.10:80",
+            120,
+            60,
+            1200,
+            600,
+            404,
+        );
 
-        update_upstream_zone_stats("api_pool", "192.168.2.10:8080", 80, 40, 800, 400, 200);
-        update_upstream_zone_stats("api_pool", "192.168.2.11:8080", 300, 200, 3000, 1500, 500);
+        update_upstream_zone_stats("test1-api_pool", "192.168.2.10:8080", 80, 40, 800, 400, 200);
+        update_upstream_zone_stats(
+            "test1-api_pool",
+            "192.168.2.11:8080",
+            300,
+            200,
+            3000,
+            1500,
+            500,
+        );
 
         // Generate VTS status content
         let status_content = generate_vts_status_content();
@@ -542,11 +574,11 @@ mod integration_tests {
         assert!(status_content.contains("nginx_vts_upstream_requests_total"));
         assert!(status_content.contains("nginx_vts_upstream_responses_total"));
 
-        // Verify specific upstream metrics
-        assert!(status_content.contains("backend_pool"));
+        // Verify specific upstream metrics with test-unique identifiers
+        assert!(status_content.contains("test1-backend_pool"));
         assert!(status_content.contains("192.168.1.10:80"));
         assert!(status_content.contains("192.168.1.11:80"));
-        assert!(status_content.contains("api_pool"));
+        assert!(status_content.contains("test1-api_pool"));
 
         println!("=== Generated VTS Status Content ===");
         println!("{}", status_content);
@@ -555,25 +587,43 @@ mod integration_tests {
 
     #[test]
     fn test_issue6_complete_metrics_output() {
-        // Clear any existing data
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Create completely fresh manager state for this test
         {
             let mut manager = match VTS_MANAGER.write() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            manager.stats.clear();
-            manager.upstream_zones.clear();
-            manager.connections = Default::default();
+            *manager = VtsStatsManager::new();
         }
 
-        // Set up test data similar to ISSUE6.md requirements
+        // Set up test data similar to ISSUE6.md requirements with unique identifiers
         update_connection_stats(1, 0, 1, 0, 16, 16);
-        update_server_zone_stats("example.com", 200, 50000, 2000000, 125);
-        update_server_zone_stats("example.com", 404, 5000, 100000, 50);
-        update_upstream_zone_stats("backend", "10.0.0.1:8080", 50, 25, 750000, 250000, 200);
-        update_upstream_zone_stats("backend", "10.0.0.2:8080", 60, 30, 680000, 230000, 200);
+        update_server_zone_stats("test2-example.com", 200, 50000, 2000000, 125);
+        update_server_zone_stats("test2-example.com", 404, 5000, 100000, 50);
         update_upstream_zone_stats(
-            "api_backend",
+            "test2-backend",
+            "10.0.0.1:8080",
+            50,
+            25,
+            750000,
+            250000,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test2-backend",
+            "10.0.0.2:8080",
+            60,
+            30,
+            680000,
+            230000,
+            200,
+        );
+        update_upstream_zone_stats(
+            "test2-api_backend",
             "192.168.1.10:9090",
             80,
             40,
@@ -600,25 +650,24 @@ mod integration_tests {
         assert!(content.contains("nginx_vts_connections_total{state=\"accepted\"} 16"));
         assert!(content.contains("nginx_vts_connections_total{state=\"handled\"} 16"));
 
-        // Verify server zone metrics
+        // Verify server zone metrics with test-unique identifiers
         assert!(content.contains("# HELP nginx_vts_server_requests_total Total number of requests"));
-        assert!(content.contains("nginx_vts_server_requests_total{zone=\"example.com\"}"));
+        assert!(content.contains("nginx_vts_server_requests_total{zone=\"test2-example.com\"}"));
         assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
-        assert!(
-            content.contains("nginx_vts_server_bytes_total{zone=\"example.com\",direction=\"in\"}")
-        );
         assert!(content
-            .contains("nginx_vts_server_bytes_total{zone=\"example.com\",direction=\"out\"}"));
-
-        // Verify upstream metrics are still present
+            .contains("nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"in\"}"));
         assert!(content.contains(
-            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"10.0.0.1:8080\"}"
+            "nginx_vts_server_bytes_total{zone=\"test2-example.com\",direction=\"out\"}"
         ));
-        assert!(content.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.1.10:9090\"}"));
+
+        // Verify upstream metrics are still present with test-unique identifiers
+        assert!(content.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"test2-backend\",server=\"10.0.0.1:8080\"}"
+        ));
+        assert!(content.contains("nginx_vts_upstream_requests_total{upstream=\"test2-api_backend\",server=\"192.168.1.10:9090\"}"));
     }
 
     #[test]
-    #[ignore] // Temporarily ignored due to test isolation issues
     fn test_vts_stats_persistence() {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
@@ -626,27 +675,25 @@ mod integration_tests {
 
         // Test that stats persist across multiple updates
 
-        // Clear any existing data to ensure clean test state
+        // Create completely fresh manager state for this test
         {
             let mut manager = match VTS_MANAGER.write() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            manager.stats.clear();
-            manager.upstream_zones.clear();
-            manager.connections = Default::default();
+            *manager = VtsStatsManager::new();
         }
 
         let initial_content = generate_vts_status_content();
-        let _initial_backend_requests = if initial_content.contains("persistence_test_backend") {
+        let _initial_backend_requests = if initial_content.contains("test3-persistence_backend") {
             1
         } else {
             0
         };
 
-        // Add stats - two requests to same server, one request to different server
+        // Add stats - two requests to same server, one request to different server with unique identifiers
         update_upstream_zone_stats(
-            "persistence_test_backend",
+            "test3-persistence_backend",
             "10.0.0.1:80",
             100,
             50,
@@ -655,7 +702,7 @@ mod integration_tests {
             200,
         );
         update_upstream_zone_stats(
-            "persistence_test_backend",
+            "test3-persistence_backend",
             "10.0.0.1:80",
             120,
             60,
@@ -664,7 +711,7 @@ mod integration_tests {
             200,
         );
         update_upstream_zone_stats(
-            "persistence_test_backend",
+            "test3-persistence_backend",
             "10.0.0.2:80",
             80,
             40,
@@ -674,19 +721,19 @@ mod integration_tests {
         );
 
         let content1 = generate_vts_status_content();
-        assert!(content1.contains("persistence_test_backend"));
+        assert!(content1.contains("test3-persistence_backend"));
 
         let content2 = generate_vts_status_content();
         // Verify metrics are present (no longer check summary format)
         assert!(content2.contains("nginx_vts_upstream_requests_total"));
 
-        // Verify final state (allow for some flexibility in race conditions)
+        // Verify final state (deterministic since we reset the manager)
         let manager = VTS_MANAGER
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        // Check that the upstream zone exists and has servers
-        let backend_zone = manager.get_upstream_zone("persistence_test_backend");
+        // Check that the upstream zone exists and has servers with test-unique identifiers
+        let backend_zone = manager.get_upstream_zone("test3-persistence_backend");
         assert!(backend_zone.is_some(), "Backend zone should exist");
 
         let zone = backend_zone.unwrap();
