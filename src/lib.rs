@@ -618,7 +618,6 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore] // Temporarily ignored due to test isolation issues
     fn test_vts_stats_persistence() {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
