@@ -429,7 +429,8 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
 ///
 /// A formatted string containing VTS status information
 fn generate_vts_status_content() -> String {
-    // First, collect current nginx connection statistics
+    // Collect current nginx connection statistics only in production
+    #[cfg(not(test))]
     vts_collect_nginx_connections();
 
     let manager = VTS_MANAGER
@@ -511,6 +512,9 @@ mod integration_tests {
             manager.upstream_zones.clear();
             manager.connections = Default::default();
         }
+
+        // Set up connection statistics for the test
+        update_connection_stats(1, 0, 1, 0, 16, 16);
 
         // Add some sample server zone data
         update_server_zone_stats("example.com", 200, 1024, 2048, 150);
