@@ -1084,7 +1084,6 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
     Ok(())
 }
 
-
 /// Module context configuration
 #[no_mangle]
 static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
