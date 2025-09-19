@@ -1028,10 +1028,7 @@ unsafe extern "C" fn ngx_http_vts_init(cf: *mut ngx_conf_t) -> ngx_int_t {
         return NGX_ERROR as ngx_int_t;
     }
 
-    // Register LOG_PHASE handler for real-time statistics collection
-    if register_log_phase_handler(cf).is_err() {
-        return NGX_ERROR as ngx_int_t;
-    }
+    // LOG_PHASE handler registration is handled externally if needed
 
     NGX_OK as ngx_int_t
 }
@@ -1083,25 +1080,6 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
             }
         }
     }
-
-    Ok(())
-}
-
-/// Register LOG_PHASE handler for real-time request statistics collection
-///
-/// NOTE: Due to nginx-rust FFI limitations, this function exports the necessary
-/// hooks for external integration. The actual LOG_PHASE registration should be
-/// done by a companion C module that calls vts_track_upstream_request().
-unsafe fn register_log_phase_handler(_cf: *mut ngx_conf_t) -> Result<(), &'static str> {
-    // For now, we rely on external C code to register the LOG_PHASE handler
-    // The external handler should call vts_track_upstream_request() for each upstream request
-    //
-    // Future implementations can use direct nginx FFI once compatibility issues are resolved
-    //
-    // Alternative approaches:
-    // 1. nginx logging module extension that calls our C API
-    // 2. Custom nginx module that wraps our Rust functionality
-    // 3. Direct FFI integration when nginx-rust supports it
 
     Ok(())
 }
