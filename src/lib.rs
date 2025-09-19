@@ -11,7 +11,8 @@ use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, RwLock};
 
-use crate::prometheus::PrometheusFormatter;
+use crate::prometheus::generate_vts_status_content;
+use crate::shm::vts_init_shm_zone;
 use crate::vts_node::VtsStatsManager;
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod config;
 mod handlers;
 mod prometheus;
+mod shm;
 mod stats;
 mod upstream_stats;
 mod vts_node;
@@ -38,18 +40,6 @@ include!("../test_issue3_integrated_flow.rs");
 
 #[cfg(test)]
 include!("../test_log_phase_handler.rs");
-
-/// VTS shared memory context structure
-///
-/// Stores the red-black tree and slab pool for VTS statistics
-#[repr(C)]
-#[allow(dead_code)]
-struct VtsSharedContext {
-    /// Red-black tree for storing VTS nodes
-    rbtree: *mut ngx_rbtree_t,
-    /// Slab pool for memory allocation
-    shpool: *mut ngx_slab_pool_t,
-}
 
 /// Calculate request time difference in milliseconds
 /// This implements the nginx-module-vts time calculation logic
@@ -418,76 +408,6 @@ http_request_handler!(vts_status_handler, |request: &mut http::Request| {
     request.output_filter(&mut out)
 });
 
-/// Generate VTS status content
-///
-/// Creates a comprehensive status report including server information,
-/// connection statistics, and request metrics.
-///
-/// # Returns
-///
-/// A formatted string containing VTS status information
-fn generate_vts_status_content() -> String {
-    // Collect current nginx connection statistics only in production
-    #[cfg(not(test))]
-    vts_collect_nginx_connections();
-
-    let manager = VTS_MANAGER
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let formatter = PrometheusFormatter::new();
-
-    // Get all upstream statistics
-    let upstream_zones = manager.get_all_upstream_zones();
-
-    let mut content = String::new();
-
-    // Header information
-    content.push_str(&format!(
-        "# nginx-vts-rust\n\
-         # Version: {}\n\
-         # Hostname: {}\n\
-         # Current Time: {}\n\
-         \n\
-         # VTS Status: Active\n\
-         # Module: nginx-vts-rust\n\
-         \n",
-        env!("CARGO_PKG_VERSION"),
-        get_hostname(),
-        get_current_time()
-    ));
-
-    // Generate Prometheus metrics section
-    content.push_str("# Prometheus Metrics:\n");
-
-    // Always add nginx info metric
-    let info_metrics = formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION"));
-    content.push_str(&info_metrics);
-
-    // Add connection statistics
-    let connection_metrics = formatter.format_connection_stats(manager.get_connection_stats());
-    content.push_str(&connection_metrics);
-
-    // Generate server zone metrics (always output, even if empty)
-    let server_zone_stats = manager.get_all_server_stats();
-    let server_metrics = formatter.format_server_stats(&server_zone_stats);
-    content.push_str(&server_metrics);
-
-    // Generate upstream metrics
-    if !upstream_zones.is_empty() {
-        let upstream_metrics = formatter.format_upstream_stats(upstream_zones);
-        content.push_str(&upstream_metrics);
-    } else {
-        // Add placeholder metric for when no upstream zones exist
-        content.push_str(
-            "# HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
-             # TYPE nginx_vts_upstream_zones_total gauge\n\
-             nginx_vts_upstream_zones_total 0\n\n",
-        );
-    }
-
-    content
-}
-
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -767,55 +687,6 @@ mod integration_tests {
         assert!(content.contains("# TYPE nginx_vts_server_requests_total counter"));
         assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
         assert!(content.contains("# TYPE nginx_vts_server_bytes_total counter"));
-    }
-}
-
-/// Get system hostname (nginx-independent version for testing)
-///
-/// Returns the system hostname, with a test-specific version when running tests.
-///
-/// # Returns
-///
-/// System hostname as a String, or "test-hostname" during tests
-fn get_hostname() -> String {
-    #[cfg(not(test))]
-    {
-        let mut buf = [0u8; 256];
-        unsafe {
-            if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
-                // Create a null-terminated string safely
-                let len = buf.iter().position(|&x| x == 0).unwrap_or(buf.len());
-                if let Ok(hostname_str) = std::str::from_utf8(&buf[..len]) {
-                    return hostname_str.to_string();
-                }
-            }
-        }
-        "localhost".to_string()
-    }
-
-    #[cfg(test)]
-    {
-        "test-hostname".to_string()
-    }
-}
-
-/// Get current time as string (nginx-independent version for testing)
-///
-/// Returns the current time as a string, with a test-specific version when running tests.
-///
-/// # Returns
-///
-/// Current time as a String, or "1234567890" during tests
-fn get_current_time() -> String {
-    #[cfg(not(test))]
-    {
-        let current_time = ngx_time();
-        format!("{current_time}")
-    }
-
-    #[cfg(test)]
-    {
-        "1234567890".to_string()
     }
 }
 
@@ -1162,126 +1033,13 @@ fn parse_size_string(size_str: &str) -> Result<usize, &'static str> {
     num.checked_mul(multiplier).ok_or("Size overflow")
 }
 
-/// Custom red-black tree insert function for VTS nodes
-///
-/// # Safety
-///
-/// This function is called by nginx's red-black tree implementation
-unsafe extern "C" fn vts_rbtree_insert_value(
-    temp: *mut ngx_rbtree_node_t,
-    node: *mut ngx_rbtree_node_t,
-    sentinel: *mut ngx_rbtree_node_t,
-) {
-    // Use the standard string-based red-black tree insert
-    // This is equivalent to ngx_str_rbtree_insert_value in nginx
-    let mut temp_ptr = temp;
-
-    loop {
-        if (*node).key < (*temp_ptr).key {
-            let next = (*temp_ptr).left;
-            if next == sentinel {
-                (*temp_ptr).left = node;
-                break;
-            }
-            temp_ptr = next;
-        } else if (*node).key > (*temp_ptr).key {
-            let next = (*temp_ptr).right;
-            if next == sentinel {
-                (*temp_ptr).right = node;
-                break;
-            }
-            temp_ptr = next;
-        } else {
-            // Keys are equal, insert to the left (maintaining order)
-            let next = (*temp_ptr).left;
-            if next == sentinel {
-                (*temp_ptr).left = node;
-                break;
-            }
-            temp_ptr = next;
-        }
-    }
-
-    (*node).parent = temp_ptr;
-    (*node).left = sentinel;
-    (*node).right = sentinel;
-    ngx_rbt_red(node);
-}
-
-/// Shared memory zone initialization callback
-///
-/// Based on ngx_http_vhost_traffic_status_init_zone from the original module
-///
-/// # Safety
-///
-/// This function is called by nginx during shared memory initialization
-extern "C" fn vts_init_shm_zone(shm_zone: *mut ngx_shm_zone_t, data: *mut c_void) -> ngx_int_t {
-    unsafe {
-        if shm_zone.is_null() {
-            return NGX_ERROR as ngx_int_t;
-        }
-
-        let old_ctx = data as *mut VtsSharedContext;
-        let shpool = (*shm_zone).shm.addr as *mut ngx_slab_pool_t;
-
-        // Allocate context in shared memory if not already allocated
-        let ctx = if (*shm_zone).data.is_null() {
-            let ctx = ngx_slab_alloc(shpool, std::mem::size_of::<VtsSharedContext>())
-                as *mut VtsSharedContext;
-            if ctx.is_null() {
-                return NGX_ERROR as ngx_int_t;
-            }
-            (*shm_zone).data = ctx as *mut c_void;
-            ctx
-        } else {
-            (*shm_zone).data as *mut VtsSharedContext
-        };
-
-        // If we have old context data (from reload), reuse the existing tree
-        if !old_ctx.is_null() {
-            (*ctx).rbtree = (*old_ctx).rbtree;
-            (*ctx).shpool = shpool;
-            return NGX_OK as ngx_int_t;
-        }
-
-        (*ctx).shpool = shpool;
-
-        // If shared memory already exists, try to reuse existing rbtree
-        if (*shm_zone).shm.exists != 0 && !(*shpool).data.is_null() {
-            (*ctx).rbtree = (*shpool).data as *mut ngx_rbtree_t;
-            return NGX_OK as ngx_int_t;
-        }
-
-        // Allocate new red-black tree in shared memory
-        let rbtree =
-            ngx_slab_alloc(shpool, std::mem::size_of::<ngx_rbtree_t>()) as *mut ngx_rbtree_t;
-        if rbtree.is_null() {
-            return NGX_ERROR as ngx_int_t;
-        }
-
-        (*ctx).rbtree = rbtree;
-        (*shpool).data = rbtree as *mut c_void;
-
-        // Allocate sentinel node for the red-black tree
-        let sentinel = ngx_slab_alloc(shpool, std::mem::size_of::<ngx_rbtree_node_t>())
-            as *mut ngx_rbtree_node_t;
-        if sentinel.is_null() {
-            return NGX_ERROR as ngx_int_t;
-        }
-
-        // Initialize the red-black tree with our custom insert function
-        ngx_rbtree_init(rbtree, sentinel, Some(vts_rbtree_insert_value));
-
-        NGX_OK as ngx_int_t
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_get_hostname() {
+        use crate::prometheus::get_hostname;
         let hostname = get_hostname();
         assert!(!hostname.is_empty());
         assert_eq!(hostname, "test-hostname");
@@ -1289,6 +1047,7 @@ mod tests {
 
     #[test]
     fn test_generate_vts_status_content() {
+        use crate::prometheus::generate_vts_status_content;
         let content = generate_vts_status_content();
         assert!(content.contains("nginx-vts-rust"));
         assert!(content.contains(&format!("Version: {}", env!("CARGO_PKG_VERSION"))));
@@ -1299,6 +1058,7 @@ mod tests {
 
     #[test]
     fn test_get_current_time() {
+        use crate::prometheus::get_current_time;
         let time_str = get_current_time();
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
@@ -1333,6 +1093,7 @@ mod tests {
 
     #[test]
     fn test_vts_shared_context_size() {
+        use crate::shm::VtsSharedContext;
         // Verify that VtsSharedContext has the expected size
         // This ensures it's compatible with C structures
         let expected_size =

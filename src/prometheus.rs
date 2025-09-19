@@ -8,6 +8,9 @@ use crate::stats::{VtsConnectionStats, VtsServerStats};
 use crate::upstream_stats::UpstreamZone;
 use std::collections::HashMap;
 
+#[cfg(not(test))]
+use ngx::ffi::ngx_time;
+
 /// Prometheus metrics formatter for VTS statistics
 ///
 /// Formats various VTS statistics into Prometheus metrics format with
@@ -399,6 +402,125 @@ impl PrometheusFormatter {
 impl Default for PrometheusFormatter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Generate VTS status content
+///
+/// Creates a comprehensive status report including server information,
+/// connection statistics, and request metrics.
+///
+/// # Returns
+///
+/// A formatted string containing VTS status information
+pub fn generate_vts_status_content() -> String {
+    // Collect current nginx connection statistics only in production
+    #[cfg(not(test))]
+    crate::vts_collect_nginx_connections();
+
+    let manager = crate::VTS_MANAGER
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let formatter = PrometheusFormatter::new();
+
+    // Get all upstream statistics
+    let upstream_zones = manager.get_all_upstream_zones();
+
+    let mut content = String::new();
+
+    // Header information
+    content.push_str(&format!(
+        "# nginx-vts-rust\n\
+         # Version: {}\n\
+         # Hostname: {}\n\
+         # Current Time: {}\n\
+         \n\
+         # VTS Status: Active\n\
+         # Module: nginx-vts-rust\n\
+         \n",
+        env!("CARGO_PKG_VERSION"),
+        get_hostname(),
+        get_current_time()
+    ));
+
+    // Generate Prometheus metrics section
+    content.push_str("# Prometheus Metrics:\n");
+
+    // Always add nginx info metric
+    let info_metrics = formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION"));
+    content.push_str(&info_metrics);
+
+    // Add connection statistics
+    let connection_metrics = formatter.format_connection_stats(manager.get_connection_stats());
+    content.push_str(&connection_metrics);
+
+    // Generate server zone metrics (always output, even if empty)
+    let server_zone_stats = manager.get_all_server_stats();
+    let server_metrics = formatter.format_server_stats(&server_zone_stats);
+    content.push_str(&server_metrics);
+
+    // Generate upstream metrics
+    if !upstream_zones.is_empty() {
+        let upstream_metrics = formatter.format_upstream_stats(upstream_zones);
+        content.push_str(&upstream_metrics);
+    } else {
+        // Add placeholder metric for when no upstream zones exist
+        content.push_str(
+            "# HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
+             # TYPE nginx_vts_upstream_zones_total gauge\n\
+             nginx_vts_upstream_zones_total 0\n\n",
+        );
+    }
+
+    content
+}
+
+/// Get system hostname (nginx-independent version for testing)
+///
+/// Returns the system hostname, with a test-specific version when running tests.
+///
+/// # Returns
+///
+/// System hostname as a String, or "test-hostname" during tests
+pub fn get_hostname() -> String {
+    #[cfg(not(test))]
+    {
+        let mut buf = [0u8; 256];
+        unsafe {
+            if libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) == 0 {
+                // Create a null-terminated string safely
+                let len = buf.iter().position(|&x| x == 0).unwrap_or(buf.len());
+                if let Ok(hostname_str) = std::str::from_utf8(&buf[..len]) {
+                    return hostname_str.to_string();
+                }
+            }
+        }
+        "localhost".to_string()
+    }
+
+    #[cfg(test)]
+    {
+        "test-hostname".to_string()
+    }
+}
+
+/// Get current time as string (nginx-independent version for testing)
+///
+/// Returns the current time as a string, with a test-specific version when running tests.
+///
+/// # Returns
+///
+/// Current time as a String, or "1234567890" during tests
+pub fn get_current_time() -> String {
+    #[cfg(not(test))]
+    {
+        let current_time = ngx_time();
+        format!("{current_time}")
+    }
+
+    #[cfg(test)]
+    {
+        "1234567890".to_string()
     }
 }
 
