@@ -4,6 +4,7 @@
 //! metrics format, including upstream server statistics, cache statistics,
 //! and general server zone metrics.
 
+use crate::cache_stats::CacheZoneStats;
 use crate::stats::{VtsConnectionStats, VtsServerStats};
 use crate::upstream_stats::UpstreamZone;
 use std::collections::HashMap;
@@ -397,6 +398,115 @@ impl PrometheusFormatter {
 
         output
     }
+
+    /// Format cache statistics to Prometheus metrics
+    ///
+    /// # Arguments
+    ///
+    /// * `cache_zones` - Map of cache zone name to cache statistics
+    ///
+    /// # Returns
+    ///
+    /// Formatted Prometheus metrics string for cache statistics
+    pub fn format_cache_stats(&self, cache_zones: &HashMap<String, CacheZoneStats>) -> String {
+        let mut output = String::new();
+
+        if cache_zones.is_empty() {
+            // Add empty metrics headers for consistency
+            output
+                .push_str("# HELP nginx_vts_cache_requests_total Total number of cache requests\n");
+            output.push_str("# TYPE nginx_vts_cache_requests_total counter\n");
+            output.push_str("# HELP nginx_vts_cache_size_bytes Cache size statistics in bytes\n");
+            output.push_str("# TYPE nginx_vts_cache_size_bytes gauge\n\n");
+            return output;
+        }
+
+        // Cache request counters
+        output.push_str(
+            "# HELP nginx_vts_cache_requests_total Total number of cache requests by status\n",
+        );
+        output.push_str("# TYPE nginx_vts_cache_requests_total counter\n");
+
+        for zone_stats in cache_zones.values() {
+            let prefix = &self.metric_prefix;
+            let zone = &zone_stats.name;
+
+            // Cache status metrics
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"hit\"}} {}\n",
+                zone_stats.cache.hit
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"miss\"}} {}\n",
+                zone_stats.cache.miss
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"bypass\"}} {}\n",
+                zone_stats.cache.bypass
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"expired\"}} {}\n",
+                zone_stats.cache.expired
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"stale\"}} {}\n",
+                zone_stats.cache.stale
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"updating\"}} {}\n",
+                zone_stats.cache.updating
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"revalidated\"}} {}\n",
+                zone_stats.cache.revalidated
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_requests_total{{zone=\"{zone}\",status=\"scarce\"}} {}\n",
+                zone_stats.cache.scarce
+            ));
+        }
+
+        output.push('\n');
+
+        // Cache size metrics
+        output.push_str("# HELP nginx_vts_cache_size_bytes Cache size statistics in bytes\n");
+        output.push_str("# TYPE nginx_vts_cache_size_bytes gauge\n");
+
+        for zone_stats in cache_zones.values() {
+            let prefix = &self.metric_prefix;
+            let zone = &zone_stats.name;
+
+            output.push_str(&format!(
+                "{prefix}cache_size_bytes{{zone=\"{zone}\",type=\"max\"}} {}\n",
+                zone_stats.size.max_size
+            ));
+            output.push_str(&format!(
+                "{prefix}cache_size_bytes{{zone=\"{zone}\",type=\"used\"}} {}\n",
+                zone_stats.size.used_size
+            ));
+        }
+
+        output.push('\n');
+
+        // Cache hit ratio metrics
+        output.push_str("# HELP nginx_vts_cache_hit_ratio Cache hit ratio percentage\n");
+        output.push_str("# TYPE nginx_vts_cache_hit_ratio gauge\n");
+
+        for zone_stats in cache_zones.values() {
+            let prefix = &self.metric_prefix;
+            let zone = &zone_stats.name;
+            let hit_ratio = zone_stats.cache.hit_ratio();
+
+            output.push_str(&format!(
+                "{prefix}cache_hit_ratio{{zone=\"{zone}\"}} {:.2}\n",
+                hit_ratio
+            ));
+        }
+
+        output.push('\n');
+
+        output
+    }
 }
 
 impl Default for PrometheusFormatter {
@@ -471,6 +581,11 @@ pub fn generate_vts_status_content() -> String {
              nginx_vts_upstream_zones_total 0\n\n",
         );
     }
+
+    // Generate cache metrics
+    let cache_zones = crate::get_all_cache_zones();
+    let cache_metrics = formatter.format_cache_stats(&cache_zones);
+    content.push_str(&cache_metrics);
 
     content
 }
