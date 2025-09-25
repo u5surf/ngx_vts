@@ -215,7 +215,7 @@ impl CacheStatsManager {
     ///
     /// # Arguments
     ///
-    /// * `zone_name` - Cache zone name  
+    /// * `zone_name` - Cache zone name
     /// * `max_size` - Maximum cache size in bytes
     /// * `used_size` - Currently used cache size in bytes
     pub fn update_cache_size(&self, zone_name: &str, max_size: u64, used_size: u64) {
