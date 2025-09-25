@@ -37,7 +37,7 @@ pub struct VtsCacheStats {
 pub struct VtsCacheSizeStats {
     /// Maximum cache size in bytes
     pub max_size: u64,
-    /// Currently used cache size in bytes  
+    /// Currently used cache size in bytes
     pub used_size: u64,
 }
 
