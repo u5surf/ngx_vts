@@ -11,6 +11,7 @@ use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
 use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, RwLock};
 
+use crate::cache_stats::CacheStatsManager;
 use crate::prometheus::generate_vts_status_content;
 use crate::shm::vts_init_shm_zone;
 use crate::vts_node::VtsStatsManager;
@@ -18,6 +19,7 @@ use crate::vts_node::VtsStatsManager;
 #[cfg(test)]
 static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+mod cache_stats;
 mod config;
 mod handlers;
 mod prometheus;
@@ -40,6 +42,9 @@ include!("../test_issue3_integrated_flow.rs");
 
 #[cfg(test)]
 include!("../test_log_phase_handler.rs");
+
+#[cfg(test)]
+include!("../test_cache_stats.rs");
 
 /// Calculate request time difference in milliseconds
 /// This implements the nginx-module-vts time calculation logic
@@ -106,6 +111,10 @@ fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
 /// Global VTS statistics manager
 static VTS_MANAGER: std::sync::LazyLock<Arc<RwLock<VtsStatsManager>>> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(VtsStatsManager::new())));
+
+/// Global cache statistics manager
+static CACHE_MANAGER: std::sync::LazyLock<Arc<CacheStatsManager>> =
+    std::sync::LazyLock::new(|| Arc::new(CacheStatsManager::new()));
 
 /// Update server zone statistics
 pub fn update_server_zone_stats(
@@ -212,6 +221,37 @@ pub unsafe extern "C" fn vts_track_upstream_request(
         bytes_received,
         status_code,
     );
+}
+
+/// Update cache statistics for a specific zone
+///
+/// # Arguments
+///
+/// * `zone_name` - Cache zone name
+/// * `cache_status` - Cache status string (e.g., "HIT", "MISS", "BYPASS")
+pub fn update_cache_stats(zone_name: &str, cache_status: &str) {
+    CACHE_MANAGER.update_cache_stats(zone_name, cache_status);
+}
+
+/// Update cache size information for a specific zone
+///
+/// # Arguments
+///
+/// * `zone_name` - Cache zone name
+/// * `max_size` - Maximum cache size in bytes
+/// * `used_size` - Currently used cache size in bytes
+pub fn update_cache_size(zone_name: &str, max_size: u64, used_size: u64) {
+    CACHE_MANAGER.update_cache_size(zone_name, max_size, used_size);
+}
+
+/// Get all cache zone statistics
+///
+/// # Returns
+///
+/// HashMap containing all cache zone statistics
+pub fn get_all_cache_zones() -> std::collections::HashMap<String, crate::cache_stats::CacheZoneStats>
+{
+    CACHE_MANAGER.get_all_cache_zones()
 }
 
 /// Check if upstream statistics collection is enabled
