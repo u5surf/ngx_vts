@@ -40,11 +40,16 @@ fn test_cache_integration_demo() {
 
     println!("=== VTS Output with Cache Statistics ===");
     
-    // Extract cache section from output
+    // Extract cache section from output (from cache metrics to end)
     let cache_section_start = content.find("# HELP nginx_vts_cache_requests_total").unwrap_or(0);
-    let cache_section_end = content.find("# HELP nginx_vts_server_requests_total")
-        .unwrap_or(content.len());
-    let cache_section = &content[cache_section_start..cache_section_end];
+    
+    let cache_section = if cache_section_start < content.len() {
+        &content[cache_section_start..]
+    } else {
+        // If cache section not found, show that it wasn't found
+        println!("Cache section not found in output");
+        ""
+    };
     
     println!("{}", cache_section);
 
