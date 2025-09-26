@@ -264,6 +264,12 @@ pub fn get_all_cache_zones() -> std::collections::HashMap<String, crate::cache_s
 /// # Arguments
 ///
 /// * `r` - Nginx request pointer
+///
+/// # Safety
+///
+/// The `r` pointer must be a valid nginx request pointer that remains valid for the
+/// duration of this call. The caller must ensure proper memory management of the
+/// nginx request structure.
 #[no_mangle]
 pub unsafe extern "C" fn vts_track_cache_status(r: *mut ngx_http_request_t) {
     if r.is_null() {
@@ -363,6 +369,12 @@ pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
 /// # Returns
 ///
 /// NGX_OK to allow request processing to continue
+///
+/// # Safety
+///
+/// The `r` pointer must be a valid nginx request pointer provided by nginx
+/// during the log phase. Nginx guarantees the request structure remains
+/// valid during log phase processing.
 #[no_mangle]
 pub unsafe extern "C" fn vts_log_phase_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     if r.is_null() {
