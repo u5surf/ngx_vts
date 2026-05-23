@@ -14,43 +14,57 @@ with nginx 1.31.
 ## Architecture overview
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│ nginx master                                                       │
-│                                                                    │
-│  vts_zone main 1m;  ─►  ngx_shared_memory_add  ─►  shm_zone        │
-│                                                       │            │
-│                                                       ▼            │
-│                                       vts_init_shm_zone (Rust)     │
-│                                                       │            │
-│                                                       ▼            │
-│           ┌──────────────────────────────────────────────┐         │
-│           │ slab pool                                    │         │
-│           │   ┌─ VtsSharedContext { table, shpool }      │         │
-│           │   └─ VtsSharedTable                          │         │
-│           │        ├ [VtsServerSlot;   256]              │         │
-│           │        └ [VtsUpstreamSlot; 512]              │         │
-│           └──────────────────────────────────────────────┘         │
-└─────────────────────────────┬──────────────────────────────────────┘
-                              │  fork
-              ┌───────────────┴────────────────┐
-              ▼                                ▼
-   ┌──────────────────────┐         ┌──────────────────────┐
-   │ worker 1             │         │ worker 2             │
-   │  LOG_PHASE handler   │         │  LOG_PHASE handler   │
-   │   └─► record_server  │         │   └─► record_server  │
-   │   └─► record_upstr.  │ ──┬───► │   └─► record_upstr.  │
-   │  /status handler     │   │     │  /status handler     │
-   │   └─► snapshot_*     │   │     │   └─► snapshot_*     │
-   └──────────────────────┘   │     └──────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│ nginx master                                                        │
+│                                                                     │
+│  vts_zone main 1m;  ─►  ngx_shared_memory_add  ─►  shm_zone         │
+│                                                       │             │
+│                                                       ▼             │
+│                                       vts_init_shm_zone (Rust)      │
+│                                                       │             │
+│                                                       ▼             │
+│           ┌──────────────────────────────────────────────┐          │
+│           │ slab pool (SlabPool: Allocator)              │          │
+│           │   ┌─ VtsShared                               │          │
+│           │   │    ├─ RwLock< RbTreeMap<                 │          │
+│           │   │    │    NgxString<SlabPool>,             │          │
+│           │   │    │    ServerCounters,                  │          │
+│           │   │    │    SlabPool> >       (servers)      │          │
+│           │   │    └─ RwLock< RbTreeMap<                 │          │
+│           │   │         NgxString<SlabPool>,             │          │
+│           │   │         UpstreamCounters,                │          │
+│           │   │         SlabPool> >      (upstreams)     │          │
+│           │   └─ shpool->data = &VtsShared (reload-safe) │          │
+│           └──────────────────────────────────────────────┘          │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  fork
+              ┌────────────────┴────────────────┐
+              ▼                                 ▼
+   ┌──────────────────────┐          ┌──────────────────────┐
+   │ worker 1             │          │ worker 2             │
+   │  LOG_PHASE handler   │          │  LOG_PHASE handler   │
+   │   └─► record_server  │          │   └─► record_server  │
+   │   └─► record_upstr.  │ ──┬────► │   └─► record_upstr.  │
+   │  /status handler     │   │      │  /status handler     │
+   │   └─► snapshot_*     │   │      │   └─► snapshot_*     │
+   └──────────────────────┘   │      └──────────────────────┘
                               │
-                  ngx_shmtx_lock(&shpool->mutex)
-                  guards every read & every write
+              ngx::sync::RwLock guards each map independently:
+              - writers (record_*) take .write()
+              - readers (/status snapshot_*) take .read()
 ```
 
-The shared table is a fixed-layout `#[repr(C)]` struct of bounded size
-(roughly 240 KB), so no slab allocation happens at request time, the
-slot count caps the per-zone cardinality (Host-header DoS surface is
-gone), and the layout maps cleanly onto raw shared memory.
+The shared state is two `RbTreeMap`s allocated from the slab pool — one
+keyed by `server_name`, one keyed by `"upstream\0server"` — wrapped in
+`ngx::sync::RwLock` for concurrent worker access. Capacity scales with
+the configured `vts_zone` size rather than being capped at compile time,
+and `/status` reads no longer block concurrent writers thanks to the
+reader-writer lock.
+
+Keys are derived from nginx configuration (the matched server block's
+first `server_name`, the upstream block name) — never from the raw
+`Host` header — so attacker-controlled values cannot expand the key
+space.
 
 When `vts_zone` is **not** declared the FFI transparently falls back to
 a process-local manager — this is how the unit tests exercise the data
@@ -61,8 +75,8 @@ model without nginx.
 - **Cross-worker aggregation** — every worker writes to the same slab
   table; `/status` returns totals across the whole nginx instance.
 - **`vts_zone` directive** — declares a real shared-memory zone
-  (`ngx_shared_memory_add`) whose `init` callback installs the fixed
-  layout from Rust.
+  (`ngx_shared_memory_add`) whose `init` callback creates two
+  `RbTreeMap`s inside the slab pool from Rust.
 - **Server-zone metrics** keyed by the matched server block's first
   `server_name` (not the raw `Host` header), so the table can't be
   blown up by adversarial Host values.
