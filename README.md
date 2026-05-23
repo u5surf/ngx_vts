@@ -227,18 +227,27 @@ happened to handle the request.
 | `vts_status` | `location` | — | Render the Prometheus text response at this location. |
 | `vts_upstream_stats` | `http`, `server`, `location` | `on \| off` | Accepted for backward compatibility; currently a no-op (upstream stats are always collected when `vts_zone` is set). |
 
-## Bounded capacity
+## Capacity
 
-The fixed shared table currently holds:
+The shared state is two `RbTreeMap`s — one keyed by `server_name`, one
+keyed by the `(upstream, server)` pair — allocated inside the slab pool
+that backs the `vts_zone`. There is no compile-time slot cap: how many
+distinct keys you can track is bounded only by the slab pool size you
+configure with `vts_zone <name> <size>`.
 
-- 256 server-zone slots (one per matched `server_name`).
-- 512 upstream-peer slots (one per `(upstream, server_addr)` pair).
-- Name buffers of 128 bytes (names beyond that are truncated).
+Rough sizing rule of thumb: a `1m` zone comfortably holds a few thousand
+server-zone keys plus a few thousand upstream pairs. Each entry is on the
+order of ~200 bytes for the counters plus the key length plus rbtree
+node overhead. Bump the size if you genuinely have more virtual hosts.
 
-If you exceed the limits, new keys are dropped silently — the existing
-counters keep updating. This is a deliberate trade-off to keep the
-layout `#[repr(C)]`, avoid slab fragmentation, and cap the
-worst-case memory cost.
+When a new key cannot be allocated (the slab pool is full), it is dropped
+silently and existing counters keep updating. There is also a defensive
+upper bound on key length (`VTS_MAX_KEY_BYTES = 256`) to keep
+misconfigured `server_name` directives from chewing up the pool.
+
+Keys are derived from nginx configuration (the matched server block's
+first `server_name`, the upstream block name) — never from the raw `Host`
+header — so attacker-controlled values cannot expand the key space.
 
 ## Development
 

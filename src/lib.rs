@@ -768,8 +768,6 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_get_hostname() {
         use crate::prometheus::get_hostname;
@@ -795,14 +793,5 @@ mod tests {
         let time_str = get_current_time();
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
-    }
-
-    #[test]
-    fn test_vts_shared_context_size() {
-        use crate::shm::{VtsSharedContext, VtsSharedTable};
-        // Two raw pointers; matches the C-side struct layout.
-        let expected_size = std::mem::size_of::<*mut VtsSharedTable>()
-            + std::mem::size_of::<*mut ngx_slab_pool_t>();
-        assert_eq!(std::mem::size_of::<VtsSharedContext>(), expected_size);
     }
 }
