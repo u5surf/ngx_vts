@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  NGINX_VERSION: "1.30.1"
 
 jobs:
   test:
@@ -20,11 +21,9 @@ jobs:
           - stable
           #- beta
           #- nightly
-        nginx:
-          - "1.28.0"
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -33,7 +32,7 @@ jobs:
         components: rustfmt, clippy
     
     - name: Cache dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
       with:
         path: |
           ~/.cargo/cache
@@ -52,9 +51,9 @@ jobs:
     
     - name: Download and build Nginx
       run: |
-        wget http://nginx.org/download/nginx-${{ matrix.nginx }}.tar.gz
-        tar -xzf nginx-${{ matrix.nginx }}.tar.gz
-        cd nginx-${{ matrix.nginx }}
+        wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+        tar -xzf nginx-${NGINX_VERSION}.tar.gz
+        cd nginx-${NGINX_VERSION}
         ./configure \
           --prefix=/tmp/nginx \
           --with-compat \
@@ -81,41 +80,40 @@ jobs:
           --with-threads
         make -j$(nproc)
         sudo make install
-        echo "NGX_VERSION=${{ matrix.nginx }}" >> $GITHUB_ENV
         echo "NGX_PATH=$(pwd)" >> $GITHUB_ENV
-    
+
     - name: Check formatting
       run: cargo fmt --all -- --check
-    
+
     - name: Run clippy
       run: |
-        export NGX_PATH=$(pwd)/nginx-${{ matrix.nginx }}
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-${{ matrix.nginx }}
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo clippy --all-targets --all-features -- -D warnings
-    
+
     - name: Build
       run: |
-        export NGX_PATH=$(pwd)/nginx-${{ matrix.nginx }}
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-${{ matrix.nginx }}
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo build --verbose
-    
+
     - name: Run tests with nginx environment
       run: |
-        export NGX_PATH=$(pwd)/nginx-${{ matrix.nginx }}
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-${{ matrix.nginx }}
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo test --lib --verbose
-    
+
     - name: Build release
       run: |
-        export NGX_PATH=$(pwd)/nginx-${{ matrix.nginx }}
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-${{ matrix.nginx }}
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo build --release --verbose
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -130,10 +128,10 @@ jobs:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     
     - name: Install Rust 1.85
-      uses: dtolnay/rust-toolchain@1.85.0
+      uses: dtolnay/rust-toolchain@c93f4f9c67595668add93d3d6895795ce52d8c2d # 1.85.0
     
     - name: Install system dependencies
       run: |
@@ -142,25 +140,24 @@ jobs:
     
     - name: Download and build Nginx
       run: |
-        wget http://nginx.org/download/nginx-1.24.0.tar.gz
-        tar -xzf nginx-1.24.0.tar.gz
-        cd nginx-1.24.0
+        wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+        tar -xzf nginx-${NGINX_VERSION}.tar.gz
+        cd nginx-${NGINX_VERSION}
         ./configure --prefix=/tmp/nginx --with-compat
         make -j$(nproc)
         sudo make install
-        echo "NGX_VERSION=1.24.0" >> $GITHUB_ENV
-    
+
     - name: Check build with MSRV
       run: |
-        export NGX_PATH=$(pwd)/nginx-1.24.0
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-1.24.0
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo build --verbose
 
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -172,24 +169,23 @@ jobs:
     
     - name: Download and build Nginx
       run: |
-        wget http://nginx.org/download/nginx-1.24.0.tar.gz
-        tar -xzf nginx-1.24.0.tar.gz
-        cd nginx-1.24.0
+        wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+        tar -xzf nginx-${NGINX_VERSION}.tar.gz
+        cd nginx-${NGINX_VERSION}
         ./configure --prefix=/tmp/nginx --with-compat
         make -j$(nproc)
         sudo make install
-        echo "NGX_VERSION=1.24.0" >> $GITHUB_ENV
-    
+
     - name: Build documentation
       run: |
-        export NGX_PATH=$(pwd)/nginx-1.24.0
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-1.24.0
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         cargo doc --no-deps --document-private-items
-    
+
     - name: Check for documentation warnings
       run: |
-        export NGX_PATH=$(pwd)/nginx-1.24.0
-        export NGINX_SOURCE_DIR=$(pwd)/nginx-1.24.0
+        export NGX_PATH=$(pwd)/nginx-${NGINX_VERSION}
+        export NGINX_SOURCE_DIR=$(pwd)/nginx-${NGINX_VERSION}
         # Build docs and check for warnings, but don't fail on warnings for now
         cargo doc --no-deps 2>&1 | tee doc-output.log
         if grep -q "warning:" doc-output.log; then
