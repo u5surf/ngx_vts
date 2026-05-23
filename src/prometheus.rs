@@ -533,8 +533,17 @@ pub fn generate_vts_status_content() -> String {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let formatter = PrometheusFormatter::new();
 
-    // Get all upstream statistics
-    let upstream_zones = manager.get_all_upstream_zones();
+    // When `vts_zone` is configured the cross-worker shared table is the
+    // authoritative source for server and upstream stats. Otherwise we
+    // fall back to the process-local manager (used by unit tests and by
+    // single-worker development setups that haven't declared a zone).
+    let server_zone_stats =
+        crate::shm::snapshot_servers().unwrap_or_else(|| manager.get_all_server_stats());
+    let upstream_owned = crate::shm::snapshot_upstreams();
+    let upstream_zones: &HashMap<String, UpstreamZone> = match upstream_owned.as_ref() {
+        Some(m) => m,
+        None => manager.get_all_upstream_zones(),
+    };
 
     let mut content = String::new();
 
@@ -565,7 +574,6 @@ pub fn generate_vts_status_content() -> String {
     content.push_str(&connection_metrics);
 
     // Generate server zone metrics (always output, even if empty)
-    let server_zone_stats = manager.get_all_server_stats();
     let server_metrics = formatter.format_server_stats(&server_zone_stats);
     content.push_str(&server_metrics);
 

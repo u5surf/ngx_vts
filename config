@@ -1,5 +1,13 @@
 ngx_addon_name=ngx_http_vts_module
 
+# Cargo names the cdylib `libngx_vts_rust.dylib` on macOS and
+# `libngx_vts_rust.so` on Linux. Pick whichever exists.
+if test -f "$ngx_addon_dir/target/release/libngx_vts_rust.dylib"; then
+    ngx_vts_lib="$ngx_addon_dir/target/release/libngx_vts_rust.dylib"
+else
+    ngx_vts_lib="$ngx_addon_dir/target/release/libngx_vts_rust.so"
+fi
+
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP
     ngx_module_name=ngx_http_vts_module
@@ -7,10 +15,10 @@ if test -n "$ngx_module_link"; then
     ngx_module_deps=
     ngx_module_srcs="$ngx_addon_dir/src/ngx_http_vts_module.c \
                      $ngx_addon_dir/src/ngx_vts_wrapper.c"
-    ngx_module_libs="$ngx_addon_dir/target/release/libngx_vts_rust.so"
+    ngx_module_libs="$ngx_vts_lib"
     . auto/module
 else
     HTTP_MODULES="$HTTP_MODULES ngx_http_vts_module"
-    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/target/release/libngx_vts_rust.so"
-    CORE_LIBS="$CORE_LIBS $ngx_addon_dir/target/release/libngx_vts_rust.so"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_vts_lib"
+    CORE_LIBS="$CORE_LIBS $ngx_vts_lib"
 fi

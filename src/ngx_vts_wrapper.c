@@ -113,12 +113,27 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         ngx_cpystrn(server_addr_buf, (u_char*)"unknown", sizeof(server_addr_buf));
     }
 
-    // Update server zone statistics for all requests
+    // Update server zone statistics for all requests.
+    //
+    // Key on the matched server block's first `server_name` rather than
+    // the raw `Host` header (`r->headers_in.server`): that header is
+    // attacker-controlled and has unbounded cardinality, which would let
+    // any client trivially blow up the shared table by sending varying
+    // Host values.
     u_char server_name_buf[256];
-    ngx_str_t *server_name = &r->headers_in.server;
-    if (server_name->len > 0 && server_name->len < sizeof(server_name_buf) - 1) {
-        ngx_memcpy(server_name_buf, server_name->data, server_name->len);
-        server_name_buf[server_name->len] = '\0';
+    ngx_http_core_srv_conf_t *cscf;
+    ngx_str_t server_zone;
+
+    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+    if (cscf != NULL && cscf->server_name.len > 0) {
+        server_zone = cscf->server_name;
+    } else {
+        ngx_str_set(&server_zone, "_");
+    }
+
+    if (server_zone.len > 0 && server_zone.len < sizeof(server_name_buf) - 1) {
+        ngx_memcpy(server_name_buf, server_zone.data, server_zone.len);
+        server_name_buf[server_zone.len] = '\0';
     } else {
         ngx_cpystrn(server_name_buf, (u_char*)"_", sizeof(server_name_buf));
     }

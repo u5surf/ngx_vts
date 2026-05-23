@@ -4,16 +4,12 @@
 //! This module provides comprehensive statistics collection for Nginx virtual hosts
 //! with Prometheus metrics output.
 
-use ngx::core::Buffer;
 use ngx::ffi::*;
-use ngx::http::HttpModuleLocationConf;
-use ngx::{core, http, http_request_handler, ngx_modules, ngx_string};
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 use std::sync::{Arc, RwLock};
 
 use crate::cache_stats::CacheStatsManager;
 use crate::prometheus::generate_vts_status_content;
-use crate::shm::vts_init_shm_zone;
 use crate::vts_node::VtsStatsManager;
 
 #[cfg(test)]
@@ -208,11 +204,22 @@ pub unsafe extern "C" fn vts_track_upstream_request(
     // Calculate request time using nginx-module-vts compatible method
     let request_time = calculate_request_time(start_sec, start_msec);
 
-    let mut manager = match VTS_MANAGER.write() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    manager.update_upstream_stats(
+    // Prefer the cross-worker shared table when `vts_zone` is configured;
+    // fall back to the process-local manager otherwise (also the path
+    // exercised by unit tests).
+    if crate::shm::record_upstream(
+        upstream_name_str,
+        server_addr_str,
+        request_time,
+        upstream_response_time,
+        bytes_sent,
+        bytes_received,
+        status_code,
+    ) {
+        return;
+    }
+
+    update_upstream_zone_stats(
         upstream_name_str,
         server_addr_str,
         request_time,
@@ -356,6 +363,12 @@ pub unsafe extern "C" fn vts_update_server_stats_ffi(
         Err(_) => return,
     };
 
+    // Same dispatch as `vts_track_upstream_request`: shared memory wins
+    // when configured, otherwise the process-local manager is used.
+    if crate::shm::record_server(server_name_str, status, bytes_in, bytes_out, request_time) {
+        return;
+    }
+
     update_server_zone_stats(server_name_str, status, bytes_in, bytes_out, request_time);
 }
 
@@ -419,34 +432,6 @@ pub unsafe extern "C" fn ngx_http_vts_init_rust_module(_cf: *mut ngx_conf_t) -> 
 
     NGX_OK as ngx_int_t
 }
-
-// VTS status request handler that generates traffic status response
-http_request_handler!(vts_status_handler, |request: &mut http::Request| {
-    // Generate VTS status content (simplified version for now)
-    let content = generate_vts_status_content();
-
-    let mut buf = match request.pool().create_buffer_from_str(&content) {
-        Some(buf) => buf,
-        None => return http::HTTPStatus::INTERNAL_SERVER_ERROR.into(),
-    };
-
-    request.set_content_length_n(buf.len());
-    request.set_status(http::HTTPStatus::OK);
-
-    buf.set_last_buf(request.is_main());
-    buf.set_last_in_chain(true);
-
-    let rc = request.send_header();
-    if rc == core::Status::NGX_ERROR || rc > core::Status::NGX_OK || request.header_only() {
-        return rc;
-    }
-
-    let mut out = ngx_chain_t {
-        buf: buf.as_ngx_buf_mut(),
-        next: std::ptr::null_mut(),
-    };
-    request.output_filter(&mut out)
-});
 
 #[cfg(test)]
 mod integration_tests {
@@ -730,220 +715,6 @@ mod integration_tests {
     }
 }
 
-/// Configuration handler for vts_status directive
-///
-/// # Safety
-///
-/// This function is called by nginx and must maintain C ABI compatibility
-unsafe extern "C" fn ngx_http_set_vts_status(
-    cf: *mut ngx_conf_t,
-    _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
-) -> *mut c_char {
-    let cf = unsafe { &mut *cf };
-    let clcf = http::NgxHttpCoreModule::location_conf_mut(cf).expect("core location conf");
-    clcf.handler = Some(vts_status_handler);
-    std::ptr::null_mut()
-}
-
-/// Configuration handler for vts_zone directive
-///
-/// Parses the vts_zone directive arguments: zone_name and size
-/// Example: vts_zone main 10m
-///
-/// # Safety
-///
-/// This function is called by nginx and must maintain C ABI compatibility
-unsafe extern "C" fn ngx_http_set_vts_zone(
-    cf: *mut ngx_conf_t,
-    _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
-) -> *mut c_char {
-    let cf = &mut *cf;
-    let args = std::slice::from_raw_parts((*cf.args).elts as *mut ngx_str_t, (*cf.args).nelts);
-
-    if args.len() != 3 {
-        let error_msg = "vts_zone directive requires exactly 2 arguments: zone_name and size\0";
-        return error_msg.as_ptr() as *mut c_char;
-    }
-
-    // Parse zone name (args[1])
-    let zone_name_slice = std::slice::from_raw_parts(args[1].data, args[1].len);
-    let zone_name = match std::str::from_utf8(zone_name_slice) {
-        Ok(name) => name,
-        Err(_) => {
-            let error_msg = "vts_zone: invalid zone name (must be valid UTF-8)\0";
-            return error_msg.as_ptr() as *mut c_char;
-        }
-    };
-
-    // Parse zone size (args[2])
-    let zone_size_slice = std::slice::from_raw_parts(args[2].data, args[2].len);
-    let zone_size_str = match std::str::from_utf8(zone_size_slice) {
-        Ok(size) => size,
-        Err(_) => {
-            let error_msg = "vts_zone: invalid zone size (must be valid UTF-8)\0";
-            return error_msg.as_ptr() as *mut c_char;
-        }
-    };
-
-    // Parse size with units (e.g., "10m", "1g", "512k")
-    let size_bytes = match parse_size_string(zone_size_str) {
-        Ok(size) => size,
-        Err(_) => {
-            let error_msg = "vts_zone: invalid size format (use format like 10m, 1g, 512k)\0";
-            return error_msg.as_ptr() as *mut c_char;
-        }
-    };
-
-    // Create shared memory zone
-    let zone_name_cstr = match std::ffi::CString::new(zone_name) {
-        Ok(cstr) => Box::new(cstr), // Store CString in a Box to extend its lifetime
-        Err(_) => {
-            let error_msg = "vts_zone: invalid zone name (contains null bytes)\0";
-            return error_msg.as_ptr() as *mut c_char;
-        }
-    };
-    let mut zone_name_ngx = ngx_str_t {
-        len: zone_name.len(),
-        data: zone_name_cstr.as_ptr() as *mut u8,
-    };
-    let shm_zone = ngx_shared_memory_add(
-        cf,
-        &mut zone_name_ngx,
-        size_bytes,
-        &raw const ngx_http_vts_module as *const _ as *mut _,
-    );
-
-    if shm_zone.is_null() {
-        let error_msg = "vts_zone: failed to allocate shared memory zone\0";
-        return error_msg.as_ptr() as *mut c_char;
-    }
-
-    // Set initialization callback for the shared memory zone
-    (*shm_zone).init = Some(vts_init_shm_zone);
-    (*shm_zone).data = std::ptr::null_mut(); // Will be set during initialization
-
-    std::ptr::null_mut()
-}
-
-/// Configuration handler for vts_upstream_stats directive
-///
-/// Enables or disables upstream statistics collection
-/// Example: vts_upstream_stats on
-///
-/// # Safety
-///
-/// This function is called by nginx and must maintain C ABI compatibility
-unsafe extern "C" fn ngx_http_set_vts_upstream_stats(
-    cf: *mut ngx_conf_t,
-    _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
-) -> *mut c_char {
-    // Get the directive value (on/off)
-    let args =
-        std::slice::from_raw_parts((*(*cf).args).elts as *const ngx_str_t, (*(*cf).args).nelts);
-
-    if args.len() < 2 {
-        return c"invalid number of arguments".as_ptr() as *mut c_char;
-    }
-
-    let value_slice = std::slice::from_raw_parts(args[1].data, args[1].len);
-    let value_str = std::str::from_utf8_unchecked(value_slice);
-
-    let enable = match value_str {
-        "on" => true,
-        "off" => false,
-        _ => return c"invalid parameter, use 'on' or 'off'".as_ptr() as *mut c_char,
-    };
-
-    // Store the configuration globally (simplified approach)
-    {
-        let mut manager = match VTS_MANAGER.write() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        // For now, we store this in a simple way - if enabled, ensure sample data exists
-        if enable {
-            // Initialize sample upstream data if not already present
-            if manager.get_upstream_zone("backend").is_none() {
-                manager.update_upstream_stats("backend", "127.0.0.1:8080", 50, 25, 500, 250, 200);
-            }
-        }
-    }
-
-    std::ptr::null_mut()
-}
-
-/// Configuration handler for vts_upstream_zone directive
-///
-/// Sets the upstream zone name for statistics tracking
-/// Example: vts_upstream_zone backend_zone
-///
-/// # Safety
-///
-/// This function is called by nginx and must maintain C ABI compatibility
-unsafe extern "C" fn ngx_http_set_vts_upstream_zone(
-    _cf: *mut ngx_conf_t,
-    _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
-) -> *mut c_char {
-    // For now, just accept the directive without detailed processing
-    // TODO: Implement proper upstream zone configuration
-    std::ptr::null_mut()
-}
-
-/// Module commands configuration
-static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
-    ngx_command_t {
-        name: ngx_string!("vts_status"),
-        type_: (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
-        set: Some(ngx_http_set_vts_status),
-        conf: 0,
-        offset: 0,
-        post: std::ptr::null_mut(),
-    },
-    ngx_command_t {
-        name: ngx_string!("vts_zone"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
-        set: Some(ngx_http_set_vts_zone),
-        conf: 0,
-        offset: 0,
-        post: std::ptr::null_mut(),
-    },
-    ngx_command_t {
-        name: ngx_string!("vts_upstream_stats"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG)
-            as ngx_uint_t,
-        set: Some(ngx_http_set_vts_upstream_stats),
-        conf: 0,
-        offset: 0,
-        post: std::ptr::null_mut(),
-    },
-    ngx_command_t {
-        name: ngx_string!("vts_upstream_zone"),
-        type_: (NGX_HTTP_UPS_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
-        set: Some(ngx_http_set_vts_upstream_zone),
-        conf: 0,
-        offset: 0,
-        post: std::ptr::null_mut(),
-    },
-    ngx_command_t::empty(),
-];
-
-/// Module post-configuration initialization
-/// Based on nginx-module-vts C implementation pattern
-unsafe extern "C" fn ngx_http_vts_init(cf: *mut ngx_conf_t) -> ngx_int_t {
-    // Initialize upstream zones from nginx configuration
-    if initialize_upstream_zones_from_config(cf).is_err() {
-        return NGX_ERROR as ngx_int_t;
-    }
-
-    // LOG_PHASE handler registration is handled externally if needed
-
-    NGX_OK as ngx_int_t
-}
-
 /// Public function to initialize upstream zones for testing
 /// This simulates the nginx configuration parsing for ISSUE3.md
 pub fn initialize_upstream_zones_for_testing() {
@@ -995,84 +766,6 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
     Ok(())
 }
 
-/// Module context configuration
-#[no_mangle]
-static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
-    preconfiguration: None,
-    postconfiguration: Some(ngx_http_vts_init),
-    create_main_conf: None,
-    init_main_conf: None,
-    create_srv_conf: None,
-    merge_srv_conf: None,
-    create_loc_conf: None,
-    merge_loc_conf: None,
-};
-
-ngx_modules!(ngx_http_vts_module);
-
-/// Main nginx module definition
-#[no_mangle]
-pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
-    ctx_index: ngx_uint_t::MAX,
-    index: ngx_uint_t::MAX,
-    name: std::ptr::null_mut(),
-    spare0: 0,
-    spare1: 0,
-    version: nginx_version as ngx_uint_t,
-    signature: NGX_RS_MODULE_SIGNATURE.as_ptr().cast(),
-
-    ctx: &NGX_HTTP_VTS_MODULE_CTX as *const _ as *mut _,
-    commands: unsafe { &NGX_HTTP_VTS_COMMANDS[0] as *const _ as *mut _ },
-    type_: NGX_HTTP_MODULE as ngx_uint_t,
-
-    init_master: None,
-    init_module: None,
-    init_process: None,
-    init_thread: None,
-    exit_thread: None,
-    exit_process: None,
-    exit_master: None,
-
-    spare_hook0: 0,
-    spare_hook1: 0,
-    spare_hook2: 0,
-    spare_hook3: 0,
-    spare_hook4: 0,
-    spare_hook5: 0,
-    spare_hook6: 0,
-    spare_hook7: 0,
-};
-
-/// Parse size string with units (e.g., "10m", "1g", "512k") to bytes
-///
-/// Supports the following units:
-/// - k/K: kilobytes (1024 bytes)
-/// - m/M: megabytes (1024*1024 bytes)  
-/// - g/G: gigabytes (1024*1024*1024 bytes)
-/// - No unit: bytes
-fn parse_size_string(size_str: &str) -> Result<usize, &'static str> {
-    if size_str.is_empty() {
-        return Err("Empty size string");
-    }
-
-    let size_str = size_str.trim();
-    let (num_str, multiplier) = if let Some(last_char) = size_str.chars().last() {
-        match last_char.to_ascii_lowercase() {
-            'k' => (&size_str[..size_str.len() - 1], 1024),
-            'm' => (&size_str[..size_str.len() - 1], 1024 * 1024),
-            'g' => (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024),
-            _ if last_char.is_ascii_digit() => (size_str, 1),
-            _ => return Err("Invalid size unit"),
-        }
-    } else {
-        return Err("Empty size string");
-    };
-
-    let num: usize = num_str.parse().map_err(|_| "Invalid number")?;
-
-    num.checked_mul(multiplier).ok_or("Size overflow")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1105,39 +798,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_size_string() {
-        // Test bytes (no unit)
-        assert_eq!(parse_size_string("1024"), Ok(1024));
-        assert_eq!(parse_size_string("512"), Ok(512));
-
-        // Test kilobytes
-        assert_eq!(parse_size_string("1k"), Ok(1024));
-        assert_eq!(parse_size_string("1K"), Ok(1024));
-        assert_eq!(parse_size_string("10k"), Ok(10240));
-
-        // Test megabytes
-        assert_eq!(parse_size_string("1m"), Ok(1024 * 1024));
-        assert_eq!(parse_size_string("1M"), Ok(1024 * 1024));
-        assert_eq!(parse_size_string("10m"), Ok(10 * 1024 * 1024));
-
-        // Test gigabytes
-        assert_eq!(parse_size_string("1g"), Ok(1024 * 1024 * 1024));
-        assert_eq!(parse_size_string("1G"), Ok(1024 * 1024 * 1024));
-
-        // Test invalid formats
-        assert!(parse_size_string("").is_err());
-        assert!(parse_size_string("abc").is_err());
-        assert!(parse_size_string("10x").is_err());
-        assert!(parse_size_string("k").is_err());
-    }
-
-    #[test]
     fn test_vts_shared_context_size() {
-        use crate::shm::VtsSharedContext;
-        // Verify that VtsSharedContext has the expected size
-        // This ensures it's compatible with C structures
-        let expected_size =
-            std::mem::size_of::<*mut ngx_rbtree_t>() + std::mem::size_of::<*mut ngx_slab_pool_t>();
+        use crate::shm::{VtsSharedContext, VtsSharedTable};
+        // Two raw pointers; matches the C-side struct layout.
+        let expected_size = std::mem::size_of::<*mut VtsSharedTable>()
+            + std::mem::size_of::<*mut ngx_slab_pool_t>();
         assert_eq!(std::mem::size_of::<VtsSharedContext>(), expected_size);
     }
 }

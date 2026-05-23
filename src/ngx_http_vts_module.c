@@ -12,6 +12,10 @@
 // Forward declarations from wrapper
 extern ngx_int_t ngx_http_vts_init_wrapper(ngx_conf_t *cf);
 
+// Forward declaration from the Rust side. Used as `shm_zone->init` so
+// every worker observes the same fixed-layout `VtsSharedTable`.
+extern ngx_int_t vts_init_shm_zone(ngx_shm_zone_t *shm_zone, void *data);
+
 // Configuration structure
 typedef struct {
     ngx_flag_t enable;
@@ -34,9 +38,9 @@ static ngx_int_t ngx_http_vts_status_handler(ngx_http_request_t *r);
 static ngx_command_t ngx_http_vts_commands[] = {
     {
         ngx_string("vts_zone"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2,
+        NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2,
         ngx_http_vts_zone_directive,
-        NGX_HTTP_LOC_CONF_OFFSET,
+        NGX_HTTP_MAIN_CONF_OFFSET,
         0,
         NULL
     },
@@ -185,16 +189,47 @@ ngx_http_vts_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     return NGX_CONF_OK;
 }
 
-// Handle vts_zone directive
+// Handle vts_zone directive: declare a shared-memory zone and hand it
+// off to the Rust-side `vts_init_shm_zone` for layout/initialization.
 static char *
 ngx_http_vts_zone_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    (void)cmd; // Mark as intentionally unused
-    (void)conf; // Mark as intentionally unused
-    (void)cf;  // For now, we don't use the configuration
-    
-    // For now, just accept the directive
-    // The Rust side handles the actual zone setup
+    ngx_str_t       *value;
+    ssize_t          size;
+    ngx_shm_zone_t  *shm_zone;
+
+    (void)cmd;
+    (void)conf;
+
+    value = cf->args->elts;
+    // value[0] = "vts_zone", value[1] = zone_name, value[2] = size
+
+    size = ngx_parse_size(&value[2]);
+    if (size == NGX_ERROR) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid size of vts_zone \"%V\"", &value[2]);
+        return NGX_CONF_ERROR;
+    }
+    // The VTS shared table needs roughly 240 KB plus slab overhead, so
+    // reject zones smaller than 1 MB up front rather than failing later
+    // inside `ngx_slab_alloc` (which would just kill the master with a
+    // generic "out of shared memory" message).
+    if (size < (ssize_t) (1024 * 1024)) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "vts_zone \"%V\" is too small, minimum 1m",
+                           &value[1]);
+        return NGX_CONF_ERROR;
+    }
+
+    shm_zone = ngx_shared_memory_add(cf, &value[1], (size_t) size,
+                                     &ngx_http_vts_module);
+    if (shm_zone == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    shm_zone->init = vts_init_shm_zone;
+    // `shm_zone->data` is populated by `vts_init_shm_zone`.
+
     return NGX_CONF_OK;
 }
 
