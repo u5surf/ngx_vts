@@ -410,8 +410,10 @@ fn with_table<R>(f: impl FnOnce(&mut VtsSharedTable) -> R) -> Option<R> {
         return None;
     }
     unsafe {
+        #[cfg(not(test))]
         ngx_shmtx_lock(&mut (*pool).mutex);
         let r = f(&mut *table);
+        #[cfg(not(test))]
         ngx_shmtx_unlock(&mut (*pool).mutex);
         Some(r)
     }
