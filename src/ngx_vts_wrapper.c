@@ -30,6 +30,11 @@ extern void vts_update_server_stats_ffi(
     uint64_t request_time
 );
 
+extern void vts_update_cache_stats_ffi(
+    const char* zone_name,
+    uint8_t cache_status
+);
+
 // External Rust initialization function  
 extern ngx_int_t ngx_http_vts_init_rust_module(ngx_conf_t *cf);
 
@@ -187,6 +192,32 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     
     ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
                   "VTS LOG_PHASE: vts_track_upstream_request completed");
+
+#if (NGX_HTTP_CACHE)
+    // Record `$upstream_cache_status` observations.  `cache_status == 0`
+    // means the request did not consult any cache (no `proxy_cache`
+    // configured, or the request bypassed cache lookup before nginx
+    // assigned a status), so skip it.  Cache zone name is the shared
+    // memory zone declared by `proxy_cache_path ... keys_zone=NAME:SIZE`.
+    if (u->cache_status != 0
+        && r->cache != NULL
+        && r->cache->file_cache != NULL
+        && r->cache->file_cache->shm_zone != NULL)
+    {
+        ngx_str_t *cz_name = &r->cache->file_cache->shm_zone->shm.name;
+        u_char cache_zone_buf[256];
+
+        if (cz_name->len > 0 && cz_name->len < sizeof(cache_zone_buf) - 1) {
+            ngx_memcpy(cache_zone_buf, cz_name->data, cz_name->len);
+            cache_zone_buf[cz_name->len] = '\0';
+
+            vts_update_cache_stats_ffi(
+                (const char *)cache_zone_buf,
+                (uint8_t)u->cache_status
+            );
+        }
+    }
+#endif
 
     return NGX_DECLINED;
 }

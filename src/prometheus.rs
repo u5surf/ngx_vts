@@ -590,8 +590,9 @@ pub fn generate_vts_status_content() -> String {
         );
     }
 
-    // Generate cache metrics
-    let cache_zones = crate::get_all_cache_zones();
+    // Generate cache metrics — prefer the cross-worker shared table
+    // when configured, otherwise fall back to the process-local manager.
+    let cache_zones = crate::shm::snapshot_caches().unwrap_or_else(crate::get_all_cache_zones);
     let cache_metrics = formatter.format_cache_stats(&cache_zones);
     content.push_str(&cache_metrics);
 

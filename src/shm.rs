@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+use crate::cache_stats::{CacheZoneStats, VtsCacheStats};
 use crate::stats::{VtsRequestTimes, VtsResponseStats, VtsServerStats};
 use crate::upstream_stats::{UpstreamServerStats, UpstreamZone, VtsResponseStats as UpstreamResp};
 
@@ -216,6 +217,73 @@ impl UpstreamCounters {
     }
 }
 
+/// Per cache-zone counters stored as the value in the `caches` map.
+///
+/// Mirrors the variants nginx exposes via `$upstream_cache_status`
+/// (1=MISS .. 8=SCARCE); a value of 0 means "no cache" and is filtered
+/// at the call site rather than counted here.
+#[derive(Clone, Copy)]
+pub struct CacheCounters {
+    pub miss: u64,
+    pub bypass: u64,
+    pub expired: u64,
+    pub stale: u64,
+    pub updating: u64,
+    pub revalidated: u64,
+    pub hit: u64,
+    pub scarce: u64,
+}
+
+impl CacheCounters {
+    fn new() -> Self {
+        Self {
+            miss: 0,
+            bypass: 0,
+            expired: 0,
+            stale: 0,
+            updating: 0,
+            revalidated: 0,
+            hit: 0,
+            scarce: 0,
+        }
+    }
+
+    /// Apply one cache-status observation.  `status` is the raw
+    /// `ngx_uint_t` from `r->upstream->cache_status` (the same numeric
+    /// scheme `$upstream_cache_status` is derived from).  Unknown
+    /// values are ignored.
+    fn update(&mut self, status: u8) {
+        match status {
+            1 => self.miss += 1,
+            2 => self.bypass += 1,
+            3 => self.expired += 1,
+            4 => self.stale += 1,
+            5 => self.updating += 1,
+            6 => self.revalidated += 1,
+            7 => self.hit += 1,
+            8 => self.scarce += 1,
+            _ => {}
+        }
+    }
+
+    /// Convert into the output-side struct that the Prometheus formatter
+    /// consumes.
+    fn into_stats(self, zone: &str) -> CacheZoneStats {
+        let mut out = CacheZoneStats::new(zone);
+        out.cache = VtsCacheStats {
+            miss: self.miss,
+            bypass: self.bypass,
+            expired: self.expired,
+            stale: self.stale,
+            updating: self.updating,
+            revalidated: self.revalidated,
+            hit: self.hit,
+            scarce: self.scarce,
+        };
+        out
+    }
+}
+
 /// Format the upstream map key as `"upstream\0server"`.  Keys come from
 /// nginx configuration and never contain a NUL byte, so the separator is
 /// unambiguous.
@@ -240,11 +308,15 @@ pub type ServerMap<A> = RbTreeMap<NgxString<A>, ServerCounters, A>;
 /// slab pool.
 pub type UpstreamMap<A> = RbTreeMap<NgxString<A>, UpstreamCounters, A>;
 
+/// `RbTreeMap` keyed by cache-zone name, stored in the slab pool.
+pub type CacheMap<A> = RbTreeMap<NgxString<A>, CacheCounters, A>;
+
 /// Root of the shared-memory state, allocated once from the slab pool.
 #[cfg_attr(test, allow(dead_code))]
 pub struct VtsShared {
     pub servers: RwLock<ServerMap<SlabPool>>,
     pub upstreams: RwLock<UpstreamMap<SlabPool>>,
+    pub caches: RwLock<CacheMap<SlabPool>>,
 }
 
 /// Pointer published once by `vts_init_shm_zone` (in the master, before
@@ -394,6 +466,43 @@ pub fn record_upstream(
     false
 }
 
+/// Record one cache-status observation into shared memory.  Returns
+/// `false` when no `vts_zone` is configured so the caller can fall back
+/// to the process-local `CACHE_MANAGER`.  Oversized zone names and
+/// out-of-memory inserts are silently dropped while reporting `true`.
+#[cfg(not(test))]
+pub fn record_cache(zone: &str, status: u8) -> bool {
+    let Some(shared) = shared() else {
+        return false;
+    };
+    if zone.is_empty() || zone.len() > VTS_MAX_KEY_BYTES {
+        return true;
+    }
+
+    let key_bytes = zone.as_bytes();
+    let mut guard = shared.caches.write();
+
+    if let Some(entry) = guard.get_mut(key_bytes) {
+        entry.update(status);
+        return true;
+    }
+
+    let alloc = guard.allocator().clone();
+    let Ok(key) = NgxString::try_from_bytes_in(key_bytes, alloc) else {
+        return true;
+    };
+    let mut counters = CacheCounters::new();
+    counters.update(status);
+    let _ = guard.try_insert(key, counters);
+    true
+}
+
+/// Test-only stub.  See [`record_server`].
+#[cfg(test)]
+pub fn record_cache(_zone: &str, _status: u8) -> bool {
+    false
+}
+
 /// Build the Prometheus-side server map from any iterator of
 /// `(key_bytes, counters)` pairs.  Used by both the production slab path
 /// and the unit tests (with plain heap-allocated maps).
@@ -436,6 +545,21 @@ where
     out
 }
 
+/// Build the Prometheus-side cache map from any iterator of
+/// `(zone_name_bytes, counters)` pairs.
+fn build_cache_snapshot<'a, I>(entries: I) -> HashMap<String, CacheZoneStats>
+where
+    I: IntoIterator<Item = (&'a [u8], &'a CacheCounters)>,
+{
+    let mut out = HashMap::new();
+    for (key_bytes, counters) in entries {
+        if let Ok(zone) = std::str::from_utf8(key_bytes) {
+            out.insert(zone.to_string(), (*counters).into_stats(zone));
+        }
+    }
+    out
+}
+
 /// Materialize all server-zone counters into the format the Prometheus
 /// formatter expects.  Returns `None` when no `vts_zone` is configured.
 #[cfg(not(test))]
@@ -467,6 +591,23 @@ pub fn snapshot_upstreams() -> Option<HashMap<String, UpstreamZone>> {
 /// Test-only stub.  See [`record_server`].
 #[cfg(test)]
 pub fn snapshot_upstreams() -> Option<HashMap<String, UpstreamZone>> {
+    None
+}
+
+/// Materialize all cache-zone counters into the format the Prometheus
+/// formatter expects.  Returns `None` when no `vts_zone` is configured.
+#[cfg(not(test))]
+pub fn snapshot_caches() -> Option<HashMap<String, CacheZoneStats>> {
+    let shared = shared()?;
+    let guard = shared.caches.read();
+    Some(build_cache_snapshot(
+        guard.iter().map(|(k, v)| (k.as_bytes(), v)),
+    ))
+}
+
+/// Test-only stub.  See [`record_server`].
+#[cfg(test)]
+pub fn snapshot_caches() -> Option<HashMap<String, CacheZoneStats>> {
     None
 }
 
@@ -521,9 +662,14 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         Ok(m) => m,
         Err(_) => return NGX_ERROR as ngx_int_t,
     };
+    let caches: CacheMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
+        Ok(m) => m,
+        Err(_) => return NGX_ERROR as ngx_int_t,
+    };
     let shared = VtsShared {
         servers: RwLock::new(servers),
         upstreams: RwLock::new(upstreams),
+        caches: RwLock::new(caches),
     };
     let shared_ptr: *mut VtsShared = match allocate(shared, &alloc) {
         Ok(p) => p.as_ptr(),
@@ -736,7 +882,112 @@ mod tests {
         assert!(!is_configured());
         assert!(snapshot_servers().is_none());
         assert!(snapshot_upstreams().is_none());
+        assert!(snapshot_caches().is_none());
         assert!(!record_server("test", 200, 0, 0, 0));
         assert!(!record_upstream("u", "s", 0, 0, 0, 0, 200));
+        assert!(!record_cache("zone", 7));
+    }
+
+    #[test]
+    fn cache_counters_accumulate_correctly() {
+        let mut c = CacheCounters::new();
+        // Two HITs, one MISS, one BYPASS, one EXPIRED.
+        c.update(7);
+        c.update(7);
+        c.update(1);
+        c.update(2);
+        c.update(3);
+
+        assert_eq!(c.hit, 2);
+        assert_eq!(c.miss, 1);
+        assert_eq!(c.bypass, 1);
+        assert_eq!(c.expired, 1);
+        assert_eq!(c.stale, 0);
+        assert_eq!(c.updating, 0);
+        assert_eq!(c.revalidated, 0);
+        assert_eq!(c.scarce, 0);
+    }
+
+    #[test]
+    fn cache_counters_cover_all_variants() {
+        let mut c = CacheCounters::new();
+        for status in 1u8..=8 {
+            c.update(status);
+        }
+        assert_eq!(c.miss, 1);
+        assert_eq!(c.bypass, 1);
+        assert_eq!(c.expired, 1);
+        assert_eq!(c.stale, 1);
+        assert_eq!(c.updating, 1);
+        assert_eq!(c.revalidated, 1);
+        assert_eq!(c.hit, 1);
+        assert_eq!(c.scarce, 1);
+    }
+
+    #[test]
+    fn cache_counters_ignore_unknown_status() {
+        let mut c = CacheCounters::new();
+        c.update(0); // "no cache" sentinel
+        c.update(9); // out-of-range
+        c.update(7); // HIT
+        assert_eq!(c.hit, 1);
+        // No other counter incremented.
+        assert_eq!(
+            c.miss + c.bypass + c.expired + c.stale + c.updating + c.revalidated + c.scarce,
+            0
+        );
+    }
+
+    #[test]
+    fn cache_counters_into_stats() {
+        let mut c = CacheCounters::new();
+        c.update(7);
+        c.update(7);
+        c.update(1);
+        c.update(2);
+
+        let stats = c.into_stats("my_cache");
+        assert_eq!(stats.name, "my_cache");
+        assert_eq!(stats.cache.hit, 2);
+        assert_eq!(stats.cache.miss, 1);
+        assert_eq!(stats.cache.bypass, 1);
+        assert_eq!(stats.cache.total_requests(), 4);
+        assert_eq!(stats.cache.hit_ratio(), 50.0);
+        // Size remains default — this PR doesn't wire up cache size.
+        assert_eq!(stats.size.max_size, 0);
+        assert_eq!(stats.size.used_size, 0);
+    }
+
+    #[test]
+    fn build_cache_snapshot_converts_entries() {
+        let mut c1 = CacheCounters::new();
+        c1.update(7);
+        c1.update(7);
+        c1.update(1);
+        let mut c2 = CacheCounters::new();
+        c2.update(2);
+        c2.update(2);
+
+        let entries: Vec<(&[u8], &CacheCounters)> =
+            vec![(b"static".as_ref(), &c1), (b"api".as_ref(), &c2)];
+        let snap = build_cache_snapshot(entries);
+        assert_eq!(snap.len(), 2);
+
+        let s = snap.get("static").unwrap();
+        assert_eq!(s.name, "static");
+        assert_eq!(s.cache.hit, 2);
+        assert_eq!(s.cache.miss, 1);
+
+        let a = snap.get("api").unwrap();
+        assert_eq!(a.cache.bypass, 2);
+        assert_eq!(a.cache.hit, 0);
+    }
+
+    #[test]
+    fn build_cache_snapshot_skips_non_utf8_keys() {
+        let counters = CacheCounters::new();
+        let bad: Vec<(&[u8], &CacheCounters)> = vec![(&[0xFF, 0xFE][..], &counters)];
+        let snap = build_cache_snapshot(bad);
+        assert!(snap.is_empty());
     }
 }

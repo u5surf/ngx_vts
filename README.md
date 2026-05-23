@@ -83,6 +83,11 @@ model without nginx.
 - **Upstream metrics** per `(upstream, server)` peer — request counts,
   bytes in/out, status-code class buckets, request and upstream
   response times.
+- **Cache hit/miss metrics** per cache zone (`proxy_cache_path
+  keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
+  `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
+  workers, exposed as `nginx_vts_cache_requests_total` plus
+  `nginx_vts_cache_hit_ratio`.
 - **Prometheus text format** at `/status`.
 - **Reload-safe** — `nginx -s reload` reuses the existing shared table,
   so counters survive a config reload.
@@ -290,9 +295,9 @@ The list below tracks known gaps relative to the original
 - JSON / HTML / JSONP output formats — only Prometheus text is emitted.
 - `/control` API for reset/delete.
 - Filter zones (`vhost_traffic_status_filter_by_set_key`).
-- Cache statistics: the formatter is in place but there is no nginx
-  feed wired to it yet (no LOG_PHASE call site reads
-  `$upstream_cache_status`).
+- Cache size metrics (`max_size` / `used_size` from
+  `ngx_http_file_cache_t`) — only the hit/miss counters are wired up;
+  the size gauges are emitted but stay at 0.
 - Connection counters are read from `cycle->connections` rather than
   the `ngx_stat_*` atomics. `reading`/`writing`/`waiting` are
   therefore approximate.

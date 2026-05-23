@@ -240,6 +240,54 @@ pub fn update_cache_stats(zone_name: &str, cache_status: &str) {
     CACHE_MANAGER.update_cache_stats(zone_name, cache_status);
 }
 
+/// Map nginx's `r->upstream->cache_status` integer to the string the
+/// process-local `CacheStatsManager` expects.  Mirrors
+/// `ngx_http_cache_status[]` in nginx's `ngx_http_cache.h`.
+fn cache_status_str(status: u8) -> Option<&'static str> {
+    match status {
+        1 => Some("MISS"),
+        2 => Some("BYPASS"),
+        3 => Some("EXPIRED"),
+        4 => Some("STALE"),
+        5 => Some("UPDATING"),
+        6 => Some("REVALIDATED"),
+        7 => Some("HIT"),
+        8 => Some("SCARCE"),
+        _ => None,
+    }
+}
+
+/// LOG_PHASE entry point invoked by the C wrapper for each request that
+/// touched a cache.  `cache_status` is the raw `ngx_uint_t` from
+/// `r->upstream->cache_status`; 0 (no cache) is filtered on the C side.
+///
+/// # Safety
+///
+/// The `zone_name` pointer must be a valid null-terminated C string.
+/// The caller must ensure the pointer remains valid for the duration of
+/// this call.
+#[no_mangle]
+pub unsafe extern "C" fn vts_update_cache_stats_ffi(zone_name: *const c_char, cache_status: u8) {
+    if zone_name.is_null() {
+        return;
+    }
+    let Some(status_str) = cache_status_str(cache_status) else {
+        return;
+    };
+    let zone_str = match std::ffi::CStr::from_ptr(zone_name).to_str() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    // Same dispatch pattern as `vts_update_server_stats_ffi`: shared
+    // memory wins when configured, otherwise fall back to the
+    // process-local manager (the path exercised by unit tests).
+    if crate::shm::record_cache(zone_str, cache_status) {
+        return;
+    }
+    CACHE_MANAGER.update_cache_stats(zone_str, status_str);
+}
+
 /// Update cache size information for a specific zone
 ///
 /// # Arguments
