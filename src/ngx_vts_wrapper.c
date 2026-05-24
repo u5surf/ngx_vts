@@ -78,22 +78,21 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         upstream_name = u->conf->upstream->host;
     }
 
-    // Extract upstream state information
+    // Extract upstream state information.  `state->peer == NULL`
+    // means nginx never contacted an upstream peer for this request —
+    // typically a cache HIT, STALE, or UPDATING served straight from
+    // the file cache.  In those cases we must NOT emit upstream
+    // counters: doing so would generate a spurious `server="unknown"`
+    // series alongside the real peer's series.
     state = u->state;
-    if (state != NULL) {
-        // Get server address
-        if (state->peer) {
-            server_addr = *state->peer;
-        }
-
-        // Get timing information
+    int have_upstream_call = 0;
+    if (state != NULL && state->peer != NULL && state->peer->len > 0) {
+        server_addr = *state->peer;
         upstream_response_time = state->response_time;
-        // Get byte counts
         bytes_sent = state->bytes_sent;
         bytes_received = state->bytes_received;
-
-        // Get status code
         status_code = state->status;
+        have_upstream_call = 1;
     }
 
     // Fallback to request-level information if upstream state is incomplete
@@ -103,19 +102,22 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
 
     // Request time calculation is now handled in Rust side using ngx_timeofday()
 
-    // Convert nginx strings to C strings for Rust FFI
+    // Convert nginx strings to C strings for Rust FFI.  Both
+    // upstream_name and server_addr are written only when we have
+    // confidence they point to real config-derived values; otherwise
+    // the upstream-tracking call below is skipped entirely.
     if (upstream_name.len > 0 && upstream_name.len < sizeof(upstream_name_buf) - 1) {
         ngx_memcpy(upstream_name_buf, upstream_name.data, upstream_name.len);
         upstream_name_buf[upstream_name.len] = '\0';
     } else {
-        ngx_cpystrn(upstream_name_buf, (u_char*)"default", sizeof(upstream_name_buf));
+        upstream_name_buf[0] = '\0';
     }
 
     if (server_addr.len > 0 && server_addr.len < sizeof(server_addr_buf) - 1) {
         ngx_memcpy(server_addr_buf, server_addr.data, server_addr.len);
         server_addr_buf[server_addr.len] = '\0';
     } else {
-        ngx_cpystrn(server_addr_buf, (u_char*)"unknown", sizeof(server_addr_buf));
+        server_addr_buf[0] = '\0';
     }
 
     // Update server zone statistics for all requests.
@@ -172,12 +174,15 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         (uint64_t)request_time
     );
 
-    // Call Rust function to update upstream statistics (if upstream exists)
-    if (upstream_name.len > 0) {
+    // Only emit upstream stats when we actually contacted a peer.
+    // `have_upstream_call` guards against the cache-HIT path where
+    // `r->upstream` is non-NULL (cache lookup uses the upstream
+    // framework) but no real peer was selected.
+    if (have_upstream_call && upstream_name.len > 0 && server_addr.len > 0) {
         ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
                       "VTS LOG_PHASE: Calling vts_track_upstream_request - upstream: %s, server: %s, status: %d",
                       upstream_name_buf, server_addr_buf, status_code);
-                      
+
         vts_track_upstream_request(
             (const char*)upstream_name_buf,
             (const char*)server_addr_buf,
