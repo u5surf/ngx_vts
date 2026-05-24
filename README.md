@@ -301,16 +301,45 @@ cargo fmt --all -- --check
 The list below tracks known gaps relative to the original
 `nginx-module-vts`. None of them block normal traffic monitoring.
 
+### Output and control
 - JSON / HTML / JSONP output formats — only Prometheus text is emitted.
 - `/control` API for reset/delete.
-- Filter zones (`vhost_traffic_status_filter_by_set_key`).
-- Cache size metrics (`max_size` / `used_size` from
-  `ngx_http_file_cache_t`) — only the hit/miss counters are wired up;
-  the size gauges are emitted but stay at 0.
+- `vts_dump` directive (periodic on-disk dump for counter recovery
+  across restarts).
+
+### Filtering and limits
+- Filter zones (`vhost_traffic_status_filter_by_set_key`,
+  `_filter_by_host`, `_filter_max_node`) — no dynamic key-based
+  grouping yet.
+- Traffic limiting (`vhost_traffic_status_limit_traffic`,
+  `_limit_traffic_by_set_key`) — the module is observation-only; it
+  cannot rate-limit responses.
+
+### Metric coverage
+- Cache size gauges (`max_size` / `used_size` from
+  `ngx_http_file_cache_t`) — emitted but stay at 0; only the hit/miss
+  counters are wired up.
+- Upstream peer state (`down`, `weight`, `max_fails`,
+  `fail_timeout`, `backup`) is not yet read from the nginx upstream
+  configuration.
+- Per-status-code counters
+  (`vhost_traffic_status_measure_status_codes`) — only the
+  `1xx`/`2xx`/`3xx`/`4xx`/`5xx` class buckets are exposed.
+- Histogram coverage is limited to **upstream response time** with a
+  fixed 11-bucket layout (Prometheus client_golang defaults). No
+  server-zone request-time histogram, and no
+  `vts_histogram_buckets`-style directive to customise bounds.
+- Average method (`vhost_traffic_status_average_method` AMM / WMA) —
+  averages are plain cumulative `sum / count`.
+- Embedded `$vts_*` variables for use in `log_format` / `if` —
+  upstream module exposes ~20; we expose none.
+
+### Implementation polish
 - LOG_PHASE handler still logs at `NGX_LOG_NOTICE`; should be moved to
   debug level before any production use.
-- Upstream peer state (`down`, `weight`, `max_fails`, …) is not yet
-  read from the nginx upstream configuration.
+- Connection counters fall back to a coarse `cycle->connections` walk
+  when nginx is built without `--with-http_stub_status_module`; only
+  the `active` total is meaningful in that mode.
 
 ## License
 
