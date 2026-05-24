@@ -4,6 +4,8 @@ A self-contained docker compose stack that builds `nginx` with the
 `ngx_vts_rust` module, scrapes `/status` from Prometheus, and renders
 the metrics in a pre-provisioned Grafana dashboard.
 
+![Grafana dashboard rendering cache hit ratio, request rates by zone and status, upstream request distribution, and connection counts](grafana/dashboard.png)
+
 ## Layout
 
 ```
@@ -15,6 +17,7 @@ examples/
 ├── prometheus/
 │   └── prometheus.yml
 └── grafana/
+    ├── dashboard.png       # screenshot used above
     ├── provisioning/       # datasource + dashboard loader
     └── dashboards/
         └── nginx-vts.json
