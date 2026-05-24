@@ -14,6 +14,10 @@
 #   10%  /bypass with X-Bypass: 1          → BYPASS
 #    5%  brand-new path each time          → MISS (forces cache growth)
 #
+# Each request also picks one of four virtual hosts at random
+# (`app1/app2/api/static.example.test`) by setting `Host:` so all four
+# server zones receive traffic.
+#
 # Ctrl-C stops the loop.
 
 set -u
@@ -58,6 +62,8 @@ echo "load.sh: hitting $TARGET at ~${RATE} req/s (Ctrl-C to stop)"
 
 trap 'echo; echo "load.sh: stopped after $count requests"; exit 0' INT TERM
 
+VHOSTS=(app1.example.test app2.example.test api.example.test static.example.test)
+
 count=0
 while true; do
     if [ "$deadline" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
@@ -65,18 +71,26 @@ while true; do
         exit 0
     fi
 
+    # Rotate Host header across the four vhosts so every server_zone
+    # gets traffic.  Note: only app1.example.test (the default_server)
+    # exposes /bypass; the BYPASS arm below always targets it.
+    host="${VHOSTS[$(( RANDOM % ${#VHOSTS[@]} ))]}"
+
     # Pick a request kind by rolling a 0..99 die.
     roll=$(( RANDOM % 100 ))
     if [ "$roll" -lt 85 ]; then
         path="/p$(( RANDOM % N_CACHED_PATHS ))"
-        curl -sS -o /dev/null --max-time 5 "$TARGET$path" || true
+        curl -sS -o /dev/null --max-time 5 -H "Host: $host" "$TARGET$path" || true
     elif [ "$roll" -lt 95 ]; then
-        curl -sS -o /dev/null --max-time 5 -H "X-Bypass: 1" "$TARGET/bypass/" || true
+        curl -sS -o /dev/null --max-time 5 \
+            -H "Host: app1.example.test" \
+            -H "X-Bypass: 1" \
+            "$TARGET/bypass/" || true
     else
         # Brand-new path: forces a MISS every time.  Capped at a few
         # thousand to keep the slab pool from filling up.
         path="/once-$(( RANDOM * 1000 + count % 1000 ))"
-        curl -sS -o /dev/null --max-time 5 "$TARGET$path" || true
+        curl -sS -o /dev/null --max-time 5 -H "Host: $host" "$TARGET$path" || true
     fi
 
     count=$(( count + 1 ))
