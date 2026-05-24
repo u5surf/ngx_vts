@@ -17,6 +17,7 @@ static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod cache_stats;
 mod config;
+mod connection_stats;
 mod handlers;
 mod prometheus;
 mod shm;
@@ -317,24 +318,6 @@ pub extern "C" fn vts_is_upstream_stats_enabled() -> bool {
     VTS_MANAGER.read().is_ok()
 }
 
-// Provided by the C wrapper.  Fills the seven output parameters with
-// the current values of the global `ngx_stat_*` atomics and returns
-// non-zero on success.  When nginx is built without
-// `--with-http_stub_status_module` the symbols don't exist, the
-// function returns 0, and the output parameters are untouched.
-#[cfg(not(test))]
-extern "C" {
-    fn vts_read_stat_counters(
-        active: *mut u64,
-        reading: *mut u64,
-        writing: *mut u64,
-        waiting: *mut u64,
-        accepted: *mut u64,
-        handled: *mut u64,
-        requests: *mut u64,
-    ) -> std::os::raw::c_int;
-}
-
 /// Collect current nginx connection statistics.  Prefer the global
 /// `ngx_stat_*` atomics (populated by nginx when stub_status is
 /// compiled in); otherwise fall back to a cycle-table walk.
@@ -345,52 +328,42 @@ pub extern "C" fn vts_collect_nginx_connections() {
         use ngx::ffi::*;
 
         // Preferred path: read the global atomics nginx itself uses to
-        // power stub_status.  Available only when the binary was built
-        // with `--with-http_stub_status_module` (so `NGX_STAT_STUB` is
-        // defined); the C-side helper reports that via its return value.
-        let mut active = 0u64;
-        let mut reading = 0u64;
-        let mut writing = 0u64;
-        let mut waiting = 0u64;
-        let mut accepted = 0u64;
-        let mut handled = 0u64;
-        let mut requests = 0u64;
-
-        let have_stats = vts_read_stat_counters(
-            &mut active,
-            &mut reading,
-            &mut writing,
-            &mut waiting,
-            &mut accepted,
-            &mut handled,
-            &mut requests,
-        ) != 0;
-
-        if !have_stats {
-            // Fallback for nginx builds without stub_status: walk the
-            // connection table.  `reading`/`writing`/`waiting` here are
-            // approximations — we cannot distinguish the per-state
-            // accurately from the raw `ngx_connection_t` view.
-            let cycle = ngx_cycle;
-            if cycle.is_null() {
-                return;
-            }
-            let connection_n = (*cycle).connection_n;
-            let connections = (*cycle).connections;
-            if connections.is_null() {
-                return;
-            }
-            for i in 0..connection_n {
-                let conn = connections.add(i);
-                if !conn.is_null() && (*conn).fd != -1 {
-                    active += 1;
+        // power stub_status (available only when nginx was built with
+        // `--with-http_stub_status_module`).  Pure-Rust dlsym lookup
+        // in `crate::connection_stats` returns None when the symbols
+        // aren't present, which gracefully falls back to the
+        // cycle-table walk below.
+        let (mut active, mut reading, mut writing, mut waiting, mut accepted, mut handled) =
+            if let Some(s) = crate::connection_stats::read() {
+                (
+                    s.active, s.reading, s.writing, s.waiting, s.accepted, s.handled,
+                )
+            } else {
+                let cycle = ngx_cycle;
+                if cycle.is_null() {
+                    return;
                 }
-            }
-            // We have no real signal for these without the atomics, so
-            // leave them at zero rather than pretend.
-            accepted = active;
-            handled = active;
-        }
+                let connection_n = (*cycle).connection_n;
+                let connections = (*cycle).connections;
+                if connections.is_null() {
+                    return;
+                }
+                let mut active = 0u64;
+                for i in 0..connection_n {
+                    let conn = connections.add(i);
+                    if !conn.is_null() && (*conn).fd != -1 {
+                        active += 1;
+                    }
+                }
+                // No real per-state signal without the atomics; leave
+                // them at zero rather than fabricate values.  Treat
+                // accepted/handled as a coarse proxy for active.
+                (active, 0u64, 0u64, 0u64, active, active)
+            };
+        // Silence "value assigned but never read" if rustc gets clever
+        // about the inferred bindings above.
+        let _ = (&mut active, &mut reading, &mut writing, &mut waiting);
+        let _ = (&mut accepted, &mut handled);
 
         // Update VTS connection statistics
         {

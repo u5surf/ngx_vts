@@ -7,7 +7,6 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
-#include <ngx_event.h>
 #include <ngx_http.h>
 
 // External Rust functions
@@ -258,42 +257,4 @@ ngx_http_vts_init_wrapper(ngx_conf_t *cf)
     }
 
     return NGX_OK;
-}
-
-/*
- * Read the global nginx connection-state atomics.
- *
- * These are populated only when nginx is built with the stub_status
- * module (which #defines NGX_STAT_STUB).  Returns 1 if the values
- * were filled in; returns 0 if the build does not expose them and
- * the Rust side should fall back to its own approximation.
- *
- * Callers must not assume the values are sampled atomically with
- * respect to each other — they are independent atomics read in
- * sequence.  The drift is negligible for monitoring purposes.
- */
-int
-vts_read_stat_counters(
-    uint64_t *active,
-    uint64_t *reading,
-    uint64_t *writing,
-    uint64_t *waiting,
-    uint64_t *accepted,
-    uint64_t *handled,
-    uint64_t *requests)
-{
-#if (NGX_STAT_STUB)
-    *active   = (uint64_t) *ngx_stat_active;
-    *reading  = (uint64_t) *ngx_stat_reading;
-    *writing  = (uint64_t) *ngx_stat_writing;
-    *waiting  = (uint64_t) *ngx_stat_waiting;
-    *accepted = (uint64_t) *ngx_stat_accepted;
-    *handled  = (uint64_t) *ngx_stat_handled;
-    *requests = (uint64_t) *ngx_stat_requests;
-    return 1;
-#else
-    (void) active;   (void) reading; (void) writing; (void) waiting;
-    (void) accepted; (void) handled; (void) requests;
-    return 0;
-#endif
 }
