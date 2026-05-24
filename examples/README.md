@@ -47,6 +47,18 @@ Admin login is `admin` / `admin` if you need to edit.
 
 ## Drive some traffic
 
+The bundled `load.sh` produces a continuous mix of HIT / MISS / BYPASS
+requests so the Grafana panels have something to plot:
+
+```bash
+./load.sh              # ~10 req/s against http://127.0.0.1:18080, forever
+./load.sh -r 50        # ~50 req/s
+./load.sh -d 60        # stop after 60 seconds
+./load.sh -h           # full options
+```
+
+Or roll your own one-liners:
+
 ```bash
 # Cacheable — first request is a MISS, the rest are HIT.
 for i in $(seq 1 50); do curl -s http://localhost:18080/foo > /dev/null; done
@@ -54,12 +66,6 @@ for i in $(seq 1 50); do curl -s http://localhost:18080/foo > /dev/null; done
 # Force a BYPASS via the configured header.
 for i in $(seq 1 10); do
   curl -s -H "X-Bypass: 1" http://localhost:18080/bypass/ > /dev/null
-done
-
-# Generate a steady-state load for ~30s (good for watching the dashboard tick).
-for i in $(seq 1 600); do
-  curl -s "http://localhost:18080/path-$((RANDOM % 5))" > /dev/null
-  sleep 0.05
 done
 ```
 
