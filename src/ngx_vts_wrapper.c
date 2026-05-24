@@ -7,6 +7,7 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
+#include <ngx_event.h>
 #include <ngx_http.h>
 
 // External Rust functions
@@ -48,13 +49,7 @@ static ngx_int_t
 ngx_http_vts_log_handler(ngx_http_request_t *r)
 {
     ngx_http_upstream_t *u;
-    ngx_http_upstream_state_t *state;
     ngx_str_t upstream_name = ngx_null_string;
-    ngx_str_t server_addr = ngx_null_string; 
-    ngx_msec_t upstream_response_time = 0;
-    off_t bytes_sent = 0;
-    off_t bytes_received = 0;
-    ngx_uint_t status_code = 0;
     u_char upstream_name_buf[256];
     u_char server_addr_buf[256];
 
@@ -78,46 +73,13 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         upstream_name = u->conf->upstream->host;
     }
 
-    // Extract upstream state information.  `state->peer == NULL`
-    // means nginx never contacted an upstream peer for this request —
-    // typically a cache HIT, STALE, or UPDATING served straight from
-    // the file cache.  In those cases we must NOT emit upstream
-    // counters: doing so would generate a spurious `server="unknown"`
-    // series alongside the real peer's series.
-    state = u->state;
-    int have_upstream_call = 0;
-    if (state != NULL && state->peer != NULL && state->peer->len > 0) {
-        server_addr = *state->peer;
-        upstream_response_time = state->response_time;
-        bytes_sent = state->bytes_sent;
-        bytes_received = state->bytes_received;
-        status_code = state->status;
-        have_upstream_call = 1;
-    }
-
-    // Fallback to request-level information if upstream state is incomplete
-    if (status_code == 0) {
-        status_code = r->headers_out.status;
-    }
-
-    // Request time calculation is now handled in Rust side using ngx_timeofday()
-
-    // Convert nginx strings to C strings for Rust FFI.  Both
-    // upstream_name and server_addr are written only when we have
-    // confidence they point to real config-derived values; otherwise
-    // the upstream-tracking call below is skipped entirely.
+    // Convert upstream name to C string up front so the loop below can
+    // reuse it across each `r->upstream_states` entry.
     if (upstream_name.len > 0 && upstream_name.len < sizeof(upstream_name_buf) - 1) {
         ngx_memcpy(upstream_name_buf, upstream_name.data, upstream_name.len);
         upstream_name_buf[upstream_name.len] = '\0';
     } else {
         upstream_name_buf[0] = '\0';
-    }
-
-    if (server_addr.len > 0 && server_addr.len < sizeof(server_addr_buf) - 1) {
-        ngx_memcpy(server_addr_buf, server_addr.data, server_addr.len);
-        server_addr_buf[server_addr.len] = '\0';
-    } else {
-        server_addr_buf[0] = '\0';
     }
 
     // Update server zone statistics for all requests.
@@ -152,10 +114,7 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
     
     // Get response status (use r->headers_out.status if available, otherwise default)
-    ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : status_code;
-    if (response_status == 0) {
-        response_status = 200; // Default to 200 if no status available
-    }
+    ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : 200;
 
     // Calculate bytes sent and received for this request
     off_t bytes_in = r->request_length;
@@ -174,29 +133,48 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         (uint64_t)request_time
     );
 
-    // Only emit upstream stats when we actually contacted a peer.
-    // `have_upstream_call` guards against the cache-HIT path where
-    // `r->upstream` is non-NULL (cache lookup uses the upstream
-    // framework) but no real peer was selected.
-    if (have_upstream_call && upstream_name.len > 0 && server_addr.len > 0) {
-        ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                      "VTS LOG_PHASE: Calling vts_track_upstream_request - upstream: %s, server: %s, status: %d",
-                      upstream_name_buf, server_addr_buf, status_code);
+    // Walk `r->upstream_states` so each upstream attempt is recorded
+    // as its own sample.  For requests with no retry this is one
+    // iteration and matches the previous single-state behavior; for
+    // retries (e.g. a 502 from peer A followed by a 200 from peer B)
+    // we now record both attempts instead of only the final one.
+    //
+    // (`u->state` is just a pointer to the in-progress entry in this
+    // same array; the array itself hangs off the request struct.)
+    //
+    // Entries whose `peer` is NULL or empty are skipped: that's the
+    // cache-HIT path where `r->upstream` exists but no peer was ever
+    // contacted, plus init-time slots before peer selection.
+    if (upstream_name.len > 0
+        && r->upstream_states != NULL
+        && r->upstream_states->nelts > 0)
+    {
+        ngx_http_upstream_state_t *states = r->upstream_states->elts;
+        ngx_uint_t i;
 
-        vts_track_upstream_request(
-            (const char*)upstream_name_buf,
-            (const char*)server_addr_buf,
-            (uint64_t)r->start_sec,
-            (uint64_t)r->start_msec,
-            (uint64_t)upstream_response_time,
-            (uint64_t)bytes_sent,
-            (uint64_t)bytes_received,
-            (uint16_t)status_code
-        );
+        for (i = 0; i < r->upstream_states->nelts; i++) {
+            ngx_http_upstream_state_t *st = &states[i];
+            if (st->peer == NULL
+                || st->peer->len == 0
+                || st->peer->len >= sizeof(server_addr_buf))
+            {
+                continue;
+            }
+            ngx_memcpy(server_addr_buf, st->peer->data, st->peer->len);
+            server_addr_buf[st->peer->len] = '\0';
+
+            vts_track_upstream_request(
+                (const char *)upstream_name_buf,
+                (const char *)server_addr_buf,
+                (uint64_t)r->start_sec,
+                (uint64_t)r->start_msec,
+                (uint64_t)st->response_time,
+                (uint64_t)st->bytes_sent,
+                (uint64_t)st->bytes_received,
+                (uint16_t)st->status
+            );
+        }
     }
-    
-    ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                  "VTS LOG_PHASE: vts_track_upstream_request completed");
 
 #if (NGX_HTTP_CACHE)
     // Record `$upstream_cache_status` observations.  `cache_status == 0`
@@ -258,7 +236,7 @@ ngx_http_vts_register_log_handler(ngx_conf_t *cf)
 
 /*
  * Module initialization wrapper
- * 
+ *
  * This function handles both C-side initialization (LOG_PHASE handler registration)
  * and Rust-side initialization.
  */
@@ -280,4 +258,42 @@ ngx_http_vts_init_wrapper(ngx_conf_t *cf)
     }
 
     return NGX_OK;
+}
+
+/*
+ * Read the global nginx connection-state atomics.
+ *
+ * These are populated only when nginx is built with the stub_status
+ * module (which #defines NGX_STAT_STUB).  Returns 1 if the values
+ * were filled in; returns 0 if the build does not expose them and
+ * the Rust side should fall back to its own approximation.
+ *
+ * Callers must not assume the values are sampled atomically with
+ * respect to each other — they are independent atomics read in
+ * sequence.  The drift is negligible for monitoring purposes.
+ */
+int
+vts_read_stat_counters(
+    uint64_t *active,
+    uint64_t *reading,
+    uint64_t *writing,
+    uint64_t *waiting,
+    uint64_t *accepted,
+    uint64_t *handled,
+    uint64_t *requests)
+{
+#if (NGX_STAT_STUB)
+    *active   = (uint64_t) *ngx_stat_active;
+    *reading  = (uint64_t) *ngx_stat_reading;
+    *writing  = (uint64_t) *ngx_stat_writing;
+    *waiting  = (uint64_t) *ngx_stat_waiting;
+    *accepted = (uint64_t) *ngx_stat_accepted;
+    *handled  = (uint64_t) *ngx_stat_handled;
+    *requests = (uint64_t) *ngx_stat_requests;
+    return 1;
+#else
+    (void) active;   (void) reading; (void) writing; (void) waiting;
+    (void) accepted; (void) handled; (void) requests;
+    return 0;
+#endif
 }

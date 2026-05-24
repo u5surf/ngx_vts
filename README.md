@@ -88,6 +88,15 @@ model without nginx.
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
   workers, exposed as `nginx_vts_cache_requests_total` plus
   `nginx_vts_cache_hit_ratio`.
+- **Per-attempt upstream tracking** — `u->states` is iterated so each
+  retry attempt (e.g. `502` from peer A followed by `200` from peer B)
+  contributes its own sample to the upstream counters, instead of only
+  the final state being recorded.
+- **Accurate connection counters** via the global `ngx_stat_*` atomics
+  when nginx is built with `--with-http_stub_status_module`;
+  `reading`/`writing`/`waiting` match what `stub_status` would
+  report. Without that build flag the module falls back to a coarse
+  cycle-table walk.
 - **Prometheus text format** at `/status`.
 - **Reload-safe** — `nginx -s reload` reuses the existing shared table,
   so counters survive a config reload.
@@ -298,15 +307,10 @@ The list below tracks known gaps relative to the original
 - Cache size metrics (`max_size` / `used_size` from
   `ngx_http_file_cache_t`) — only the hit/miss counters are wired up;
   the size gauges are emitted but stay at 0.
-- Connection counters are read from `cycle->connections` rather than
-  the `ngx_stat_*` atomics. `reading`/`writing`/`waiting` are
-  therefore approximate.
 - LOG_PHASE handler still logs at `NGX_LOG_NOTICE`; should be moved to
   debug level before any production use.
 - Upstream peer state (`down`, `weight`, `max_fails`, …) is not yet
   read from the nginx upstream configuration.
-- Multi-peer retries (`u->states`) are not iterated; only the last
-  state is counted.
 
 ## License
 

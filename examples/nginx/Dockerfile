@@ -68,6 +68,11 @@ COPY --from=rust-build \
     ./target/release/libngx_vts_rust.so
 
 WORKDIR /build/nginx-src
+# `--with-http_stub_status_module` is what defines `NGX_STAT_STUB`,
+# which in turn populates the `ngx_stat_*` atomics that the Rust
+# side reads for accurate connection-state counters.  Without it
+# the build still works, but `nginx_vts_connections{state="..."}`
+# falls back to a coarse approximation.
 RUN ./configure \
         --prefix=/etc/nginx \
         --sbin-path=/usr/sbin/nginx \
@@ -77,6 +82,7 @@ RUN ./configure \
         --pid-path=/run/nginx.pid \
         --modules-path=/etc/nginx/modules \
         --with-compat \
+        --with-http_stub_status_module \
         --add-dynamic-module=/build/ngx_vts_rust \
     && make -j"$(nproc)"
 
