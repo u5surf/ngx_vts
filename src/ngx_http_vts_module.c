@@ -115,9 +115,14 @@ ngx_http_vts_status_handler(ngx_http_request_t *r)
     const char *status_output = ngx_http_vts_get_status();
     size_t status_len = ngx_strlen(status_output);
     
-    // Set response headers
+    // Set response headers.  The Content-Type is the Prometheus text
+    // exposition format identifier; Prometheus 3.x rejects scrapes that
+    // arrive without a recognised Content-Type.
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = status_len;
+    ngx_str_set(&r->headers_out.content_type, "text/plain; version=0.0.4; charset=utf-8");
+    r->headers_out.content_type_len = r->headers_out.content_type.len;
+    r->headers_out.content_type_lowcase = NULL;
     
     if (r->method == NGX_HTTP_HEAD) {
         rc = ngx_http_send_header(r);
