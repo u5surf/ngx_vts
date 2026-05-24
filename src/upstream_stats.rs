@@ -6,6 +6,16 @@
 
 use std::collections::HashMap;
 
+/// Cumulative bucket upper bounds (in milliseconds) for the upstream
+/// response-time histogram.  Mirrors the Prometheus client_golang
+/// `DefBuckets` set, just expressed in milliseconds so the on-the-wire
+/// representation is `le="0.005", "0.01", ...`.
+pub const RESPONSE_TIME_BUCKET_BOUNDS_MS: [u64; 11] =
+    [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+
+/// Number of histogram buckets (excluding `+Inf`, which is implicit).
+pub const RESPONSE_TIME_BUCKET_COUNT: usize = RESPONSE_TIME_BUCKET_BOUNDS_MS.len();
+
 /// Response statistics structure (reused from stats.rs design)
 #[derive(Debug, Clone, Default)]
 pub struct VtsResponseStats {
@@ -54,6 +64,11 @@ pub struct UpstreamServerStats {
 
     /// Counter for response time measurements (for average calculation)
     pub response_time_counter: u64,
+
+    /// Cumulative counts of upstream-response-time samples whose value
+    /// in milliseconds is `<= RESPONSE_TIME_BUCKET_BOUNDS_MS[i]`.  The
+    /// implicit `+Inf` bucket equals `response_time_counter`.
+    pub response_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 
     /// Server weight from nginx configuration
     pub weight: u32,
@@ -108,6 +123,7 @@ impl UpstreamServerStats {
             request_time_counter: 0,
             response_time_total: 0,
             response_time_counter: 0,
+            response_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
             weight: 1,
             max_fails: 1,
             fail_timeout: 10,
@@ -144,9 +160,14 @@ impl UpstreamServerStats {
             self.request_time_counter += 1;
         }
 
-        if upstream_response_time > 0 {
-            self.response_time_total += upstream_response_time;
-            self.response_time_counter += 1;
+        // See `shm.rs::UpstreamCounters::update` for the reasoning:
+        // sub-ms (0) is a real sample, not a missing measurement.
+        self.response_time_total += upstream_response_time;
+        self.response_time_counter += 1;
+        for (i, &bound) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+            if upstream_response_time <= bound {
+                self.response_buckets[i] += 1;
+            }
         }
     }
 
@@ -278,6 +299,10 @@ mod tests {
 
         assert_eq!(stats.avg_request_time(), 150.0);
         assert_eq!(stats.avg_response_time(), 62.5);
+
+        // 50ms ≤ le=50 (idx 3); 75ms first lands in le=100 (idx 4).
+        assert_eq!(stats.response_buckets[3], 1);
+        assert_eq!(stats.response_buckets[4], 2);
     }
 
     #[test]

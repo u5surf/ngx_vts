@@ -27,7 +27,10 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::cache_stats::{CacheZoneStats, VtsCacheStats};
 use crate::stats::{VtsRequestTimes, VtsResponseStats, VtsServerStats};
-use crate::upstream_stats::{UpstreamServerStats, UpstreamZone, VtsResponseStats as UpstreamResp};
+use crate::upstream_stats::{
+    UpstreamServerStats, UpstreamZone, VtsResponseStats as UpstreamResp,
+    RESPONSE_TIME_BUCKET_BOUNDS_MS, RESPONSE_TIME_BUCKET_COUNT,
+};
 
 /// Sanity upper bound on the byte length of a single key.  The matched
 /// `server_name` and upstream/server values come from nginx config rather
@@ -146,6 +149,8 @@ pub struct UpstreamCounters {
     pub request_time_counter: u64,
     pub response_time_total: u64,
     pub response_time_counter: u64,
+    /// See [`UpstreamServerStats::response_buckets`].
+    pub response_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 }
 
 impl UpstreamCounters {
@@ -163,6 +168,7 @@ impl UpstreamCounters {
             request_time_counter: 0,
             response_time_total: 0,
             response_time_counter: 0,
+            response_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
         }
     }
 
@@ -184,6 +190,7 @@ impl UpstreamCounters {
         stats.request_time_counter = self.request_time_counter;
         stats.response_time_total = self.response_time_total;
         stats.response_time_counter = self.response_time_counter;
+        stats.response_buckets = self.response_buckets;
         stats
     }
 
@@ -202,9 +209,17 @@ impl UpstreamCounters {
             self.request_time_total += request_time;
             self.request_time_counter += 1;
         }
-        if upstream_response_time > 0 {
-            self.response_time_total += upstream_response_time;
-            self.response_time_counter += 1;
+        // `upstream_response_time == 0` is a legitimate sub-millisecond
+        // sample (common on loopback / colocated upstreams), not a
+        // missing measurement.  Counting it preserves the histogram
+        // invariant `sum(buckets[+Inf]) == _count` and avoids dropping
+        // ~all data from fast upstreams.
+        self.response_time_total += upstream_response_time;
+        self.response_time_counter += 1;
+        for (i, &bound) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+            if upstream_response_time <= bound {
+                self.response_buckets[i] += 1;
+            }
         }
         match status {
             100..=199 => self.status_1xx += 1,
@@ -765,19 +780,56 @@ mod tests {
     }
 
     #[test]
-    fn upstream_counters_skip_zero_timings() {
+    fn upstream_counters_request_time_filter_vs_response_time_no_filter() {
         let mut c = UpstreamCounters::new();
         c.update(0, 0, 100, 50, 200);
         c.update(50, 0, 100, 50, 200);
         c.update(0, 30, 100, 50, 200);
 
         assert_eq!(c.request_counter, 3);
-        // Only the second call contributes a request_time sample.
+        // request_time keeps the `> 0` filter (historical behavior;
+        // sub-ms request timings aren't the metric we care about).
         assert_eq!(c.request_time_counter, 1);
         assert_eq!(c.request_time_total, 50);
-        // Only the third call contributes an upstream_response_time sample.
-        assert_eq!(c.response_time_counter, 1);
+        // response_time counts every sample including 0 (sub-ms is a
+        // real measurement on fast upstreams).
+        assert_eq!(c.response_time_counter, 3);
         assert_eq!(c.response_time_total, 30);
+        // The two 0ms samples land in every bucket starting at le=5,
+        // the 30ms sample lands in le=50 and above.
+        assert_eq!(c.response_buckets[0], 2); // le=5    → two 0ms
+        assert_eq!(c.response_buckets[2], 2); // le=25   → still two
+        assert_eq!(c.response_buckets[3], 3); // le=50   → +30ms
+        assert_eq!(c.response_buckets[10], 3); // le=10000
+    }
+
+    #[test]
+    fn upstream_counters_response_buckets_track_distribution() {
+        let mut c = UpstreamCounters::new();
+        // Samples (ms): 3, 7, 30, 75, 600, 50_000
+        //   - 3      ≤ 5     → all 11 buckets
+        //   - 7      ≤ 10    → buckets 1..=10
+        //   - 30     ≤ 50    → buckets 3..=10
+        //   - 75     ≤ 100   → buckets 4..=10
+        //   - 600    ≤ 1000  → buckets 7..=10
+        //   - 50_000 > 10000 → no bucket (only +Inf/count)
+        for sample in [3u64, 7, 30, 75, 600, 50_000] {
+            c.update(0, sample, 0, 0, 200);
+        }
+
+        assert_eq!(c.response_time_counter, 6); // all samples counted
+        assert_eq!(c.response_buckets[0], 1); // le=5    → {3}
+        assert_eq!(c.response_buckets[1], 2); // le=10   → {3,7}
+        assert_eq!(c.response_buckets[2], 2); // le=25   → {3,7}
+        assert_eq!(c.response_buckets[3], 3); // le=50   → {3,7,30}
+        assert_eq!(c.response_buckets[4], 4); // le=100  → {3,7,30,75}
+        assert_eq!(c.response_buckets[5], 4); // le=250
+        assert_eq!(c.response_buckets[6], 4); // le=500
+        assert_eq!(c.response_buckets[7], 5); // le=1000 → +600
+        assert_eq!(c.response_buckets[8], 5); // le=2500
+        assert_eq!(c.response_buckets[9], 5); // le=5000
+        assert_eq!(c.response_buckets[10], 5); // le=10000
+                                               // 50_000 only shows up in +Inf (== response_time_counter == 6).
     }
 
     #[test]
@@ -858,6 +910,9 @@ mod tests {
         assert_eq!(s1.responses.status_4xx, 1);
         assert_eq!(s1.request_time_total, 370);
         assert_eq!(s1.request_time_counter, 3);
+        // 50, 60, 70 ms — all fall under le=100 (idx 4) and above.
+        assert_eq!(s1.response_buckets[3], 1); // le=50  → {50}
+        assert_eq!(s1.response_buckets[4], 3); // le=100 → {50,60,70}
 
         let s2 = backend.servers.get("10.0.0.2:80").unwrap();
         assert_eq!(s2.request_counter, 1);

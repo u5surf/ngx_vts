@@ -6,7 +6,7 @@
 
 use crate::cache_stats::CacheZoneStats;
 use crate::stats::{VtsConnectionStats, VtsServerStats};
-use crate::upstream_stats::UpstreamZone;
+use crate::upstream_stats::{UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
 use std::collections::HashMap;
 
 #[cfg(not(test))]
@@ -172,7 +172,69 @@ impl PrometheusFormatter {
         // HTTP status code metrics
         self.format_upstream_status_metrics(&mut output, upstream_zones);
 
+        // Upstream response-time distribution (classic histogram).
+        self.format_upstream_response_histogram(&mut output, upstream_zones);
+
         output
+    }
+
+    /// Format the upstream response-time histogram in the standard
+    /// Prometheus exposition format (`_bucket{le="..."}`, `_sum`,
+    /// `_count`).  Compatible with `histogram_quantile()` for p50 /
+    /// p90 / p99 panels.
+    #[allow(dead_code)] // Used in format_upstream_stats method
+    fn format_upstream_response_histogram(
+        &self,
+        output: &mut String,
+        upstream_zones: &HashMap<String, UpstreamZone>,
+    ) {
+        output.push_str(&format!(
+            "# HELP {}upstream_response_duration_seconds Upstream response time distribution\n",
+            self.metric_prefix
+        ));
+        output.push_str(&format!(
+            "# TYPE {}upstream_response_duration_seconds histogram\n",
+            self.metric_prefix
+        ));
+
+        for (upstream_name, zone) in upstream_zones {
+            for (server_addr, stats) in &zone.servers {
+                for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+                    let bound_s = bound_ms as f64 / 1000.0;
+                    output.push_str(&format!(
+                        "{}upstream_response_duration_seconds_bucket{{upstream=\"{}\",server=\"{}\",le=\"{}\"}} {}\n",
+                        self.metric_prefix,
+                        upstream_name,
+                        server_addr,
+                        format_le_bound(bound_s),
+                        stats.response_buckets[i]
+                    ));
+                }
+                // +Inf bucket holds every sample, equal to _count.
+                output.push_str(&format!(
+                    "{}upstream_response_duration_seconds_bucket{{upstream=\"{}\",server=\"{}\",le=\"+Inf\"}} {}\n",
+                    self.metric_prefix,
+                    upstream_name,
+                    server_addr,
+                    stats.response_time_counter
+                ));
+                output.push_str(&format!(
+                    "{}upstream_response_duration_seconds_sum{{upstream=\"{}\",server=\"{}\"}} {:.6}\n",
+                    self.metric_prefix,
+                    upstream_name,
+                    server_addr,
+                    stats.response_time_total as f64 / 1000.0
+                ));
+                output.push_str(&format!(
+                    "{}upstream_response_duration_seconds_count{{upstream=\"{}\",server=\"{}\"}} {}\n",
+                    self.metric_prefix,
+                    upstream_name,
+                    server_addr,
+                    stats.response_time_counter
+                ));
+            }
+        }
+        output.push('\n');
     }
 
     /// Format upstream HTTP status code metrics
@@ -515,6 +577,20 @@ impl Default for PrometheusFormatter {
     }
 }
 
+/// Format a histogram `le` bound (in seconds) as Prometheus expects
+/// — fixed-point with trailing zeros trimmed: `0.005`, `0.01`, `0.1`,
+/// `1`, `2.5`, `10`.  Important that whatever rendering we choose is
+/// stable across scrapes so the time series doesn't fragment.
+fn format_le_bound(seconds: f64) -> String {
+    let formatted = format!("{seconds:.3}");
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Generate VTS status content
 ///
 /// Creates a comprehensive status report including server information,
@@ -664,6 +740,9 @@ mod tests {
         server1.request_time_counter = 100;
         server1.response_time_total = 2500; // 2.5 seconds total
         server1.response_time_counter = 100;
+        // Distribute the 100 samples across the histogram so we have
+        // something meaningful to assert against.
+        server1.response_buckets = [10, 20, 35, 60, 80, 95, 98, 99, 100, 100, 100];
         server1.responses.status_2xx = 95;
         server1.responses.status_4xx = 3;
         server1.responses.status_5xx = 2;
@@ -722,6 +801,27 @@ mod tests {
         assert!(output.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",server=\"10.0.0.1:80\",type=\"request_avg\"} 0.050000")); // 50ms avg -> 0.05s
         assert!(output.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",server=\"10.0.0.1:80\",type=\"upstream_avg\"} 0.025000"));
         // 25ms avg -> 0.025s
+
+        // Histogram: HELP/TYPE headers, a few representative buckets,
+        // +Inf, _sum, _count.
+        assert!(output.contains("# HELP nginx_vts_upstream_response_duration_seconds Upstream response time distribution"));
+        assert!(output.contains("# TYPE nginx_vts_upstream_response_duration_seconds histogram"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"0.005\"} 10"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"0.1\"} 80"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"1\"} 99"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"+Inf\"} 100"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_sum{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 2.500000"));
+        assert!(output.contains("nginx_vts_upstream_response_duration_seconds_count{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 100"));
+    }
+
+    #[test]
+    fn test_format_le_bound_trims_trailing_zeros() {
+        assert_eq!(format_le_bound(0.005), "0.005");
+        assert_eq!(format_le_bound(0.01), "0.01");
+        assert_eq!(format_le_bound(0.1), "0.1");
+        assert_eq!(format_le_bound(1.0), "1");
+        assert_eq!(format_le_bound(2.5), "2.5");
+        assert_eq!(format_le_bound(10.0), "10");
     }
 
     #[test]

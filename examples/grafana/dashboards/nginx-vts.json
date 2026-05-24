@@ -166,6 +166,46 @@
     },
     {
       "type": "timeseries",
+      "title": "Upstream response time percentiles (p50/p90/p99)",
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p50 {{upstream}} -> {{server}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p90 {{upstream}} -> {{server}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p99 {{upstream}} -> {{server}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
       "title": "Active connections",
       "id": 6,
       "datasource": { "type": "prometheus", "uid": "prometheus" },

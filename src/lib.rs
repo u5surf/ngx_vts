@@ -801,12 +801,18 @@ unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<
         if let Some(zone) = manager.get_upstream_zone_mut("backend") {
             if let Some(server) = zone.servers.get_mut("127.0.0.1:8080") {
                 server.down = false;
-                // Reset request counter to 0 for initialization
+                // Reset all counters to 0 for initialization. The seed
+                // call above only exists to register the zone in the
+                // map; it must not leave any non-zero residue (avg
+                // computation divides by `*_counter`).
                 server.request_counter = 0;
                 server.in_bytes = 0;
                 server.out_bytes = 0;
                 server.request_time_total = 0;
+                server.request_time_counter = 0;
                 server.response_time_total = 0;
+                server.response_time_counter = 0;
+                server.response_buckets = [0; crate::upstream_stats::RESPONSE_TIME_BUCKET_COUNT];
             }
         }
     }
