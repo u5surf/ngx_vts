@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: nginx-vts
+    metrics_path: /status
+    static_configs:
+      - targets:
+          - nginx:8080

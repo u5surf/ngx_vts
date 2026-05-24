@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: ngx-vts
+    orgId: 1
+    folder: nginx-vts
+    type: file
+    disableDeletion: true
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

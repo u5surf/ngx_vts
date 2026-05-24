@@ -1,0 +1,46 @@
+# Bring up nginx (with ngx_vts_rust) + Prometheus + Grafana.
+#
+#     cd examples
+#     docker compose up --build
+#
+# Then:
+#     curl http://localhost:8080/foo        # exercises the cache
+#     open  http://localhost:9090           # Prometheus
+#     open  http://localhost:3000           # Grafana (anonymous Viewer)
+
+services:
+  nginx:
+    build:
+      # Build context is the repo root so the Dockerfile can COPY the
+      # Rust crate (Cargo.toml, src/, config*).
+      context: ..
+      dockerfile: examples/nginx/Dockerfile
+    container_name: ngx-vts-nginx
+    ports:
+      - "18080:8080"
+
+  prometheus:
+    image: prom/prometheus:v3.0.0
+    container_name: ngx-vts-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - nginx
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: ngx-vts-grafana
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

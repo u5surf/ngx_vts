@@ -1,0 +1,11 @@
+target/
+.git/
+.github/
+.idea/
+.vscode/
+README.md
+LICENSE-*
+Makefile
+test-nginx.conf
+test_nginx.conf
+test_directives.md
