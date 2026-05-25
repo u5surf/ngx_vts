@@ -169,7 +169,7 @@
       "title": "Upstream responses / sec by status class",
       "id": 8,
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 7 },
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
@@ -200,7 +200,7 @@
       "title": "Upstream response time percentiles (p50/p90/p99)",
       "id": 7,
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "x": 0, "y": 27, "w": 24, "h": 8 },
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
