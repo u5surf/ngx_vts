@@ -335,8 +335,6 @@ The list below tracks known gaps relative to the original
   upstream module exposes ~20; we expose none.
 
 ### Implementation polish
-- LOG_PHASE handler still logs at `NGX_LOG_NOTICE`; should be moved to
-  debug level before any production use.
 - Connection counters fall back to a coarse `cycle->connections` walk
   when nginx is built without `--with-http_stub_status_module`; only
   the `active` total is meaningful in that mode.
