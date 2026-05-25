@@ -1,237 +1,73 @@
-//! Statistics collection and management for VTS module
+//! Per-server-zone view types shared by the shared-memory backend
+//! (`shm.rs`), the process-local fallback (`vts_node.rs`), and the
+//! Prometheus formatter (`prometheus.rs`).
 //!
-//! This module is currently unused but prepared for future implementation
+//! Storage layers populate these structs at snapshot time; the
+//! formatter reads them.  Field shapes match what
+//! `nginx_vts_server_*` metrics need.
 
-#![allow(dead_code, unused_imports)]
-
-use ngx::ffi::*;
-use ngx::{core, http, ngx_string};
-use std::collections::HashMap;
-use std::os::raw::c_void;
-use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-#[derive(Debug, Clone)]
-pub struct VtsServerStats {
-    pub requests: u64,
-    pub bytes_in: u64,
-    pub bytes_out: u64,
-    pub responses: VtsResponseStats,
-    pub request_times: VtsRequestTimes,
-    pub last_updated: u64,
-}
-
+/// Per-status-class response counters.
 #[derive(Debug, Clone, Default)]
 pub struct VtsResponseStats {
+    /// 1xx responses.
     pub status_1xx: u64,
+    /// 2xx responses.
     pub status_2xx: u64,
+    /// 3xx responses.
     pub status_3xx: u64,
+    /// 4xx responses.
     pub status_4xx: u64,
+    /// 5xx responses.
     pub status_5xx: u64,
 }
 
-#[derive(Debug, Clone)]
+/// Request-time aggregate (in seconds).
+#[derive(Debug, Clone, Default)]
 pub struct VtsRequestTimes {
+    /// Sum of all observed request times.  Populated by the storage
+    /// layers; reserved for a future `..._seconds_sum` Prometheus
+    /// metric and otherwise unread today.
+    #[allow(dead_code)]
     pub total: f64,
+    /// Minimum observed request time (`0.0` if no requests yet).
     pub min: f64,
+    /// Maximum observed request time.
     pub max: f64,
+    /// Arithmetic mean (`total / count`).
     pub avg: f64,
 }
 
-#[derive(Debug, Clone)]
-pub struct VtsUpstreamStats {
-    pub server: String,
+/// Snapshot of one server zone (`server_name` from the matched
+/// server block).  Aggregates everything the formatter needs to
+/// render `nginx_vts_server_*` metrics for a single zone.
+#[derive(Debug, Clone, Default)]
+pub struct VtsServerStats {
+    /// Total requests served by this zone.
     pub requests: u64,
+    /// Bytes received from clients.
+    pub bytes_in: u64,
+    /// Bytes sent to clients.
+    pub bytes_out: u64,
+    /// Per-status-class response breakdown.
     pub responses: VtsResponseStats,
-    pub response_times: VtsRequestTimes,
-    pub weight: u32,
-    pub max_fails: u32,
-    pub fail_timeout: u32,
-    pub backup: bool,
-    pub down: bool,
+    /// Request-time aggregate.
+    pub request_times: VtsRequestTimes,
 }
 
-#[derive(Debug, Clone)]
-pub struct VtsCacheStats {
-    pub miss: u64,
-    pub bypass: u64,
-    pub expired: u64,
-    pub stale: u64,
-    pub updating: u64,
-    pub revalidated: u64,
-    pub hit: u64,
-    pub scarce: u64,
-}
-
-/// Connection statistics for nginx
+/// Connection-state snapshot used by the Prometheus
+/// `nginx_vts_connections` series.
 #[derive(Debug, Clone, Default)]
 pub struct VtsConnectionStats {
-    /// Currently active connections
+    /// Currently active connections.
     pub active: u64,
-    /// Connections reading request headers
+    /// Connections reading request headers.
     pub reading: u64,
-    /// Connections writing response data
+    /// Connections writing response data.
     pub writing: u64,
-    /// Idle connections waiting for requests
+    /// Idle connections waiting for requests.
     pub waiting: u64,
-    /// Total accepted connections
+    /// Total accepted connections.
     pub accepted: u64,
-    /// Total handled connections
+    /// Total handled connections.
     pub handled: u64,
 }
-
-#[derive(Debug, Clone)]
-pub struct VtsStats {
-    pub hostname: String,
-    pub version: String,
-    pub timestamp: u64,
-    pub load_timestamp: u64,
-    pub connections: VtsConnectionStats,
-    pub server_zones: HashMap<String, VtsServerStats>,
-    pub filter_zones: HashMap<String, HashMap<String, VtsServerStats>>,
-    pub upstream_zones: HashMap<String, Vec<VtsUpstreamStats>>,
-    pub cache_zones: HashMap<String, VtsCacheStats>,
-}
-
-impl Default for VtsServerStats {
-    fn default() -> Self {
-        VtsServerStats {
-            requests: 0,
-            bytes_in: 0,
-            bytes_out: 0,
-            responses: VtsResponseStats::default(),
-            request_times: VtsRequestTimes::default(),
-            last_updated: Self::current_timestamp(),
-        }
-    }
-}
-
-impl Default for VtsRequestTimes {
-    fn default() -> Self {
-        VtsRequestTimes {
-            total: 0.0,
-            min: 0.0,
-            max: 0.0,
-            avg: 0.0,
-        }
-    }
-}
-
-impl VtsServerStats {
-    fn current_timestamp() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    }
-
-    pub fn update_request(
-        &mut self,
-        status: u16,
-        bytes_in: u64,
-        bytes_out: u64,
-        request_time: f64,
-    ) {
-        self.requests += 1;
-        self.bytes_in += bytes_in;
-        self.bytes_out += bytes_out;
-        self.last_updated = Self::current_timestamp();
-
-        // Update status counters
-        match status {
-            100..=199 => self.responses.status_1xx += 1,
-            200..=299 => self.responses.status_2xx += 1,
-            300..=399 => self.responses.status_3xx += 1,
-            400..=499 => self.responses.status_4xx += 1,
-            500..=599 => self.responses.status_5xx += 1,
-            _ => {}
-        }
-
-        // Update request times
-        self.request_times.total += request_time;
-        if self.request_times.min == 0.0 || request_time < self.request_times.min {
-            self.request_times.min = request_time;
-        }
-        if request_time > self.request_times.max {
-            self.request_times.max = request_time;
-        }
-        self.request_times.avg = self.request_times.total / self.requests as f64;
-    }
-}
-
-pub struct VtsStatsManager {
-    stats: Arc<RwLock<VtsStats>>,
-    shared_zone: Option<*mut ngx_shm_zone_t>,
-}
-
-impl VtsStatsManager {
-    pub fn new() -> Self {
-        let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let stats = VtsStats {
-            hostname,
-            version,
-            timestamp,
-            load_timestamp: timestamp,
-            connections: VtsConnectionStats::default(),
-            server_zones: HashMap::new(),
-            filter_zones: HashMap::new(),
-            upstream_zones: HashMap::new(),
-            cache_zones: HashMap::new(),
-        };
-
-        VtsStatsManager {
-            stats: Arc::new(RwLock::new(stats)),
-            shared_zone: None,
-        }
-    }
-
-    pub fn update_request_stats(
-        &self,
-        server_name: &str,
-        status: u16,
-        bytes_in: u64,
-        bytes_out: u64,
-        request_time: f64,
-    ) {
-        let mut stats = self.stats.write().unwrap();
-
-        let server_stats = stats
-            .server_zones
-            .entry(server_name.to_string())
-            .or_default();
-
-        server_stats.update_request(status, bytes_in, bytes_out, request_time);
-    }
-
-    pub fn update_connection_stats(&self, active: u64, reading: u64, writing: u64, waiting: u64) {
-        let mut stats = self.stats.write().unwrap();
-        stats.connections.active = active;
-        stats.connections.reading = reading;
-        stats.connections.writing = writing;
-        stats.connections.waiting = waiting;
-    }
-
-    pub fn get_stats(&self) -> VtsStats {
-        let stats = self.stats.read().unwrap();
-        // Clone the inner data instead of the guard
-        (*stats).clone()
-    }
-
-    pub fn reset_stats(&self) {
-        let mut stats = self.stats.write().unwrap();
-        stats.server_zones.clear();
-        stats.filter_zones.clear();
-        stats.upstream_zones.clear();
-        stats.cache_zones.clear();
-        stats.connections = VtsConnectionStats::default();
-    }
-}
-
-unsafe impl Send for VtsStatsManager {}
-unsafe impl Sync for VtsStatsManager {}

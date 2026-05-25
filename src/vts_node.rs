@@ -292,7 +292,6 @@ impl VtsStatsManager {
                     max: (node_stats.request_time_max as f64) / 1000.0,
                     avg: avg_time,
                 },
-                last_updated: node_stats.last_request_time,
             };
 
             server_stats.insert(zone_name.clone(), server_stat);

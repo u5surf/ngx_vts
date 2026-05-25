@@ -52,20 +52,11 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     u_char upstream_name_buf[256];
     u_char server_addr_buf[256];
 
-    // Debug log: LOG_PHASE handler called
-    ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                  "VTS LOG_PHASE handler called for request: %V", &r->uri);
-
     // Only process requests that used upstream
     u = r->upstream;
     if (u == NULL) {
-        ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                      "VTS LOG_PHASE: No upstream found for request");
         return NGX_DECLINED;
     }
-
-    ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                  "VTS LOG_PHASE: Found upstream for request");
 
     // Get upstream name from the upstream configuration
     if (u->conf && u->conf->upstream) {
@@ -118,11 +109,6 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     // Calculate bytes sent and received for this request
     off_t bytes_in = r->request_length;
     off_t bytes_out = r->connection->sent;
-    
-    // Call Rust function to update server zone statistics
-    ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                  "VTS LOG_PHASE: Updating server stats - server: %s, status: %d, bytes_in: %O, bytes_out: %O",
-                  server_name_buf, response_status, bytes_in, bytes_out);
 
     vts_update_server_stats_ffi(
         (const char*)server_name_buf,

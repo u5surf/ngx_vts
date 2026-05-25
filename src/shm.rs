@@ -107,7 +107,6 @@ impl ServerCounters {
                 max: self.request_time_max as f64 / 1000.0,
                 avg,
             },
-            last_updated: 0,
         }
     }
 

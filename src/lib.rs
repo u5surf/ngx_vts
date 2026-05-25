@@ -16,9 +16,7 @@ use crate::vts_node::VtsStatsManager;
 static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod cache_stats;
-mod config;
 mod connection_stats;
-mod handlers;
 mod prometheus;
 mod shm;
 mod stats;
@@ -69,39 +67,24 @@ fn calculate_time_diff_ms(
     }
 }
 
-/// Calculate request time using nginx-module-vts compatible method
-/// This function replicates the behavior of ngx_http_vhost_traffic_status_request_time
+/// Calculate elapsed milliseconds since the request started.
+/// Production reads `ngx_timeofday()`; tests return `0` because no
+/// real clock is available in the unit-test binary (and the elapsed
+/// time isn't what the tests are asserting on anyway — see
+/// `calculate_time_diff_ms` tests for the arithmetic).
 fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
     #[cfg(not(test))]
     {
         let tp = ngx_timeofday();
         let current_sec = tp.sec as u64;
         let current_msec = tp.msec as u64;
-
-        // Ensure non-negative result (equivalent to ngx_max(ms, 0))
         calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec)
     }
 
     #[cfg(test)]
     {
-        // In test environment, simulate a variety of time differences
-        // This avoids the ngx_timeofday() linking issue
-        // For demonstration, cycle through several test cases to cover edge cases
-        // (In real tests, you would call calculate_time_diff_ms directly with various values)
-        let test_cases = [
-            // Same second, small ms diff
-            (start_sec, start_msec, start_sec, start_msec + 1),
-            // Next second, ms wraps around
-            (start_sec, 999, start_sec + 1, 0),
-            // Several seconds later, ms diff positive
-            (start_sec, start_msec, start_sec + 2, start_msec + 10),
-            // Next second, ms less than start (should borrow)
-            (start_sec, 900, start_sec + 1, 100),
-        ];
-        // Pick a test case based on the start_msec to vary the result
-        let idx = (start_msec as usize) % test_cases.len();
-        let (s_sec, s_msec, c_sec, c_msec) = test_cases[idx];
-        calculate_time_diff_ms(s_sec, s_msec, c_sec, c_msec)
+        let _ = (start_sec, start_msec);
+        0
     }
 }
 
@@ -846,5 +829,24 @@ mod tests {
         let time_str = get_current_time();
         assert!(!time_str.is_empty());
         assert_eq!(time_str, "1234567890");
+    }
+
+    #[test]
+    fn calculate_time_diff_ms_handles_same_second() {
+        // 50ms apart within one second.
+        assert_eq!(crate::calculate_time_diff_ms(100, 200, 100, 250), 50);
+    }
+
+    #[test]
+    fn calculate_time_diff_ms_handles_msec_wraparound() {
+        // current_msec < start_msec but current_sec > start_sec: borrow.
+        assert_eq!(crate::calculate_time_diff_ms(100, 900, 101, 100), 200);
+    }
+
+    #[test]
+    fn calculate_time_diff_ms_clamps_zero_on_clock_skew() {
+        // Same second but msec went backwards (clock skew): return 0
+        // rather than panic / underflow.
+        assert_eq!(crate::calculate_time_diff_ms(100, 500, 100, 100), 0);
     }
 }
