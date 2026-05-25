@@ -166,10 +166,41 @@
     },
     {
       "type": "timeseries",
+      "title": "Upstream responses / sec by status class",
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 7 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 30,
+            "stacking": { "mode": "normal", "group": "A" },
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(nginx_vts_upstream_responses_total[1m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
       "title": "Upstream response time percentiles (p50/p90/p99)",
       "id": 7,
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "gridPos": { "x": 0, "y": 27, "w": 24, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
