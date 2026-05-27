@@ -83,6 +83,14 @@ model without nginx.
 - **Upstream metrics** per `(upstream, server)` peer — request counts,
   bytes in/out, status-code class buckets, request and upstream
   response times.
+- **Per-attempt upstream tracking** — `r->upstream_states` is iterated
+  so each retry attempt (e.g. `502` from peer A followed by `200`
+  from peer B) contributes its own sample to the upstream counters,
+  not just the final state.
+- **Upstream response time histogram** — classic Prometheus
+  `_bucket{le=...}` / `_sum` / `_count` over a fixed 11-bucket layout
+  (client_golang defaults), enabling
+  `histogram_quantile(0.99, ...)` for p50/p90/p99 panels.
 - **Cache hit/miss metrics** per cache zone (`proxy_cache_path
   keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
@@ -91,20 +99,20 @@ model without nginx.
 - **Cache size gauges** per cache zone — `proxy_cache_path max_size=…`
   and current on-disk usage (`sh->size × bsize`) exposed as
   `nginx_vts_cache_size_bytes{type="max"}` and `{type="used"}`.
-- **Per-attempt upstream tracking** — `u->states` is iterated so each
-  retry attempt (e.g. `502` from peer A followed by `200` from peer B)
-  contributes its own sample to the upstream counters, instead of only
-  the final state being recorded.
 - **Accurate connection counters** via the global `ngx_stat_*` atomics
   when nginx is built with `--with-http_stub_status_module`;
   `reading`/`writing`/`waiting` match what `stub_status` would
-  report. Without that build flag the module falls back to a coarse
-  cycle-table walk.
-- **Prometheus text format** at `/status`.
+  report. Without that build flag the module falls back to a
+  cycle-table walk and only the `active` total stays meaningful.
+- **Subrequest- and `/status`-aware counting** — the LOG_PHASE
+  handler skips internal subrequests (`auth_request`, `mirror`,
+  `addition`, …) and the module's own `/status` scrapes, so neither
+  double-counts the per-vhost counters.
+- **Prometheus text format** at `/status` with the
+  `text/plain; version=0.0.4` Content-Type that Prometheus 3.x
+  requires.
 - **Reload-safe** — `nginx -s reload` reuses the existing shared table,
   so counters survive a config reload.
-- **Connection metrics** — currently approximated; a proper read of
-  `ngx_stat_*` is on the open-issues list.
 
 ## Build
 
@@ -288,9 +296,10 @@ header — so attacker-controlled values cannot expand the key space.
 NGINX_SOURCE_DIR=/path/to/nginx-source cargo test --lib
 ```
 
-There are 52 unit tests covering the shared-table data model, the
-upstream tracker, the Prometheus formatter, the cache statistics
-helpers, and the integration paths through `VTS_MANAGER`.
+~75 unit tests cover the shared-table data model, the upstream
+tracker, the Prometheus formatter (per metric family), the cache
+statistics helpers, the LOG_PHASE-level FFI, and the rendered
+`/status` output via the process-local `VTS_MANAGER` fallback.
 
 ### Lints
 
@@ -333,11 +342,6 @@ The list below tracks known gaps relative to the original
   averages are plain cumulative `sum / count`.
 - Embedded `$vts_*` variables for use in `log_format` / `if` —
   upstream module exposes ~20; we expose none.
-
-### Implementation polish
-- Connection counters fall back to a coarse `cycle->connections` walk
-  when nginx is built without `--with-http_stub_status_module`; only
-  the `active` total is meaningful in that mode.
 
 ## License
 
