@@ -1,149 +1,32 @@
-//! VTS Node Implementation with Shared Memory and Red-Black Tree
+//! Process-local fallback for VTS counters.
 //!
-//! This module provides efficient storage and retrieval of virtual host traffic statistics
-//! using nginx's shared memory and red-black tree data structures, similar to the original
-//! nginx-module-vts implementation.
+//! Used when the `vts_zone` directive is not configured (or in unit
+//! tests, where the slab allocator isn't available).  Storage uses
+//! the same [`ServerCounters`] type as the shared-memory backend so
+//! the conversion to the Prometheus-side [`VtsServerStats`] is
+//! single-sourced.
 
-use crate::stats::{VtsConnectionStats, VtsRequestTimes, VtsResponseStats, VtsServerStats};
+use crate::shm::ServerCounters;
+use crate::stats::{VtsConnectionStats, VtsServerStats};
 use crate::upstream_stats::UpstreamZone;
-#[cfg(not(test))]
-use ngx::ffi::ngx_time;
 use std::collections::HashMap;
 
-/// VTS Node statistics data structure
+/// Process-local VTS statistics manager.
 ///
-/// Stores traffic statistics for a specific virtual host or server zone
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct VtsNodeStats {
-    /// Total number of requests
-    pub requests: u64,
-
-    /// Total bytes received from clients
-    pub bytes_in: u64,
-
-    /// Total bytes sent to clients  
-    pub bytes_out: u64,
-
-    /// Response status code counters
-    pub status_1xx: u64,
-    pub status_2xx: u64,
-    pub status_3xx: u64,
-    pub status_4xx: u64,
-    pub status_5xx: u64,
-
-    /// Request timing statistics
-    pub request_time_total: u64, // Total request time in milliseconds
-    pub request_time_max: u64, // Maximum request time in milliseconds
-
-    /// Timestamp of first request
-    pub first_request_time: u64,
-
-    /// Timestamp of last request
-    pub last_request_time: u64,
-}
-
-#[allow(dead_code)]
-impl VtsNodeStats {
-    /// Create a new VTS node with zero statistics
-    pub fn new() -> Self {
-        Self {
-            requests: 0,
-            bytes_in: 0,
-            bytes_out: 0,
-            status_1xx: 0,
-            status_2xx: 0,
-            status_3xx: 0,
-            status_4xx: 0,
-            status_5xx: 0,
-            request_time_total: 0,
-            request_time_max: 0,
-            first_request_time: 0,
-            last_request_time: 0,
-        }
-    }
-
-    /// Update statistics with a new request
-    pub fn update_request(
-        &mut self,
-        status: u16,
-        bytes_in: u64,
-        bytes_out: u64,
-        request_time: u64,
-    ) {
-        self.requests += 1;
-        self.bytes_in += bytes_in;
-        self.bytes_out += bytes_out;
-        self.request_time_total += request_time;
-
-        // Update max request time
-        if request_time > self.request_time_max {
-            self.request_time_max = request_time;
-        }
-
-        // Update status counters
-        match status {
-            100..=199 => self.status_1xx += 1,
-            200..=299 => self.status_2xx += 1,
-            300..=399 => self.status_3xx += 1,
-            400..=499 => self.status_4xx += 1,
-            500..=599 => self.status_5xx += 1,
-            _ => {} // Ignore invalid status codes
-        }
-
-        // Update timestamps
-        let current_time = Self::get_current_time();
-        if self.first_request_time == 0 {
-            self.first_request_time = current_time;
-        }
-        self.last_request_time = current_time;
-    }
-
-    /// Get average request time in milliseconds
-    pub fn avg_request_time(&self) -> f64 {
-        if self.requests > 0 {
-            self.request_time_total as f64 / self.requests as f64
-        } else {
-            0.0
-        }
-    }
-
-    /// Get current time (nginx-safe version for testing)
-    fn get_current_time() -> u64 {
-        #[cfg(not(test))]
-        {
-            ngx_time() as u64
-        }
-        #[cfg(test)]
-        {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        }
-    }
-}
-
-impl Default for VtsNodeStats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Simple VTS statistics manager (without shared memory for now)
-///
-/// This will be replaced with shared memory implementation later
+/// Mirrors the public surface of the shared-memory backend so the
+/// higher-level FFI can transparently fall through when no
+/// `vts_zone` is configured (and so unit tests, which never link
+/// the slab allocator, still have somewhere to write).
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct VtsStatsManager {
-    /// In-memory server zone statistics storage (temporary implementation)
-    pub stats: HashMap<String, VtsNodeStats>,
+    /// Per server-zone counters keyed by `server_name`.
+    pub stats: HashMap<String, ServerCounters>,
 
-    /// Upstream zones statistics storage
+    /// Per-upstream zone statistics.
     pub upstream_zones: HashMap<String, UpstreamZone>,
 
-    /// Connection statistics
+    /// Latest connection-state snapshot.
     pub connections: VtsConnectionStats,
 }
 
@@ -167,21 +50,10 @@ impl VtsStatsManager {
         bytes_out: u64,
         request_time: u64,
     ) {
-        let stats = self.stats.entry(server_name.to_string()).or_default();
-        stats.update_request(status, bytes_in, bytes_out, request_time);
-    }
-
-    /// Get statistics for a server zone
-    pub fn get_server_stats(&self, server_name: &str) -> Option<&VtsNodeStats> {
-        self.stats.get(server_name)
-    }
-
-    /// Get all server statistics
-    pub fn get_all_stats(&self) -> Vec<(String, VtsNodeStats)> {
         self.stats
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+            .entry(server_name.to_string())
+            .or_insert_with(ServerCounters::new)
+            .update(status, bytes_in, bytes_out, request_time);
     }
 
     // --- Upstream Zone Management ---
@@ -264,40 +136,10 @@ impl VtsStatsManager {
 
     /// Get all server statistics in format compatible with PrometheusFormatter
     pub fn get_all_server_stats(&self) -> HashMap<String, VtsServerStats> {
-        let mut server_stats = HashMap::new();
-
-        for (zone_name, node_stats) in &self.stats {
-            let avg_time = if node_stats.requests > 0 {
-                (node_stats.request_time_total as f64) / (node_stats.requests as f64) / 1000.0
-            } else {
-                0.0
-            };
-
-            let server_stat = VtsServerStats {
-                requests: node_stats.requests,
-                bytes_in: node_stats.bytes_in,
-                bytes_out: node_stats.bytes_out,
-                responses: VtsResponseStats {
-                    status_1xx: node_stats.status_1xx,
-                    status_2xx: node_stats.status_2xx,
-                    status_3xx: node_stats.status_3xx,
-                    status_4xx: node_stats.status_4xx,
-                    status_5xx: node_stats.status_5xx,
-                },
-                request_times: VtsRequestTimes {
-                    total: node_stats.request_time_total as f64 / 1000.0,
-                    // TODO: Implement proper minimum request time tracking
-                    // Currently using 0.0 as placeholder since min time is not tracked in VtsNodeStats
-                    min: 0.0,
-                    max: (node_stats.request_time_max as f64) / 1000.0,
-                    avg: avg_time,
-                },
-            };
-
-            server_stats.insert(zone_name.clone(), server_stat);
-        }
-
-        server_stats
+        self.stats
+            .iter()
+            .map(|(zone, counters)| (zone.clone(), (*counters).into_stats()))
+            .collect()
     }
 }
 
@@ -319,6 +161,27 @@ mod tests {
         let manager = VtsStatsManager::new();
         assert!(manager.stats.is_empty());
         assert!(manager.upstream_zones.is_empty());
+    }
+
+    #[test]
+    fn update_server_stats_records_through_server_counters() {
+        // Reuses the same counter type as the shm backend, so we get
+        // the proper min/max/avg request-time tracking for free
+        // (previously vts_node had a placeholder `0` for min).
+        let mut manager = VtsStatsManager::new();
+        manager.update_server_stats("example.test", 200, 100, 1000, 50);
+        manager.update_server_stats("example.test", 404, 50, 200, 200);
+        manager.update_server_stats("example.test", 200, 75, 500, 120);
+
+        let snap = manager.get_all_server_stats();
+        let s = snap.get("example.test").expect("zone should exist");
+        assert_eq!(s.requests, 3);
+        assert_eq!(s.bytes_in, 225);
+        assert_eq!(s.bytes_out, 1700);
+        assert_eq!(s.responses.status_2xx, 2);
+        assert_eq!(s.responses.status_4xx, 1);
+        assert_eq!(s.request_times.min, 0.050);
+        assert_eq!(s.request_times.max, 0.200);
     }
 
     #[test]

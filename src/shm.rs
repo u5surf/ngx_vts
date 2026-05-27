@@ -44,7 +44,7 @@ pub const VTS_MAX_KEY_BYTES: usize = 256;
 const TIME_MIN_UNSET: u64 = u64::MAX;
 
 /// Per server-zone counters stored as the value in the `servers` map.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ServerCounters {
     pub requests: u64,
     pub bytes_in: u64,
@@ -60,7 +60,7 @@ pub struct ServerCounters {
 }
 
 impl ServerCounters {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             requests: 0,
             bytes_in: 0,
@@ -78,7 +78,7 @@ impl ServerCounters {
 
     /// Convert into the output-side struct that the Prometheus formatter
     /// consumes.
-    fn into_stats(self) -> VtsServerStats {
+    pub(crate) fn into_stats(self) -> VtsServerStats {
         let total = self.request_time_total as f64 / 1000.0;
         let avg = if self.requests > 0 {
             total / self.requests as f64
@@ -110,7 +110,7 @@ impl ServerCounters {
         }
     }
 
-    fn update(&mut self, status: u16, bytes_in: u64, bytes_out: u64, request_time: u64) {
+    pub(crate) fn update(&mut self, status: u16, bytes_in: u64, bytes_out: u64, request_time: u64) {
         self.requests += 1;
         self.bytes_in += bytes_in;
         self.bytes_out += bytes_out;
