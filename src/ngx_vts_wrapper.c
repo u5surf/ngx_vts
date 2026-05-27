@@ -52,6 +52,16 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     u_char upstream_name_buf[256];
     u_char server_addr_buf[256];
 
+    // Count each user-facing request exactly once.  nginx fires the
+    // LOG_PHASE handler for every subrequest as well as the main
+    // request (auth_request, addition, SSI, X-Accel-Redirect, …);
+    // letting those through would double-count both server-zone and
+    // upstream counters.  `r->main` always points at the top-level
+    // request, so `r == r->main` selects exactly the main one.
+    if (r != r->main) {
+        return NGX_DECLINED;
+    }
+
     // Only process requests that used upstream
     u = r->upstream;
     if (u == NULL) {
