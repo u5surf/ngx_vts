@@ -244,6 +244,8 @@ fn cache_status_str(status: u8) -> Option<&'static str> {
 /// LOG_PHASE entry point invoked by the C wrapper for each request that
 /// touched a cache.  `cache_status` is the raw `ngx_uint_t` from
 /// `r->upstream->cache_status`; 0 (no cache) is filtered on the C side.
+/// `max_size` / `used_size` are the current file cache settings (in
+/// bytes) and are overwritten on every call.
 ///
 /// # Safety
 ///
@@ -251,7 +253,12 @@ fn cache_status_str(status: u8) -> Option<&'static str> {
 /// The caller must ensure the pointer remains valid for the duration of
 /// this call.
 #[no_mangle]
-pub unsafe extern "C" fn vts_update_cache_stats_ffi(zone_name: *const c_char, cache_status: u8) {
+pub unsafe extern "C" fn vts_update_cache_stats_ffi(
+    zone_name: *const c_char,
+    cache_status: u8,
+    max_size: u64,
+    used_size: u64,
+) {
     if zone_name.is_null() {
         return;
     }
@@ -266,10 +273,11 @@ pub unsafe extern "C" fn vts_update_cache_stats_ffi(zone_name: *const c_char, ca
     // Same dispatch pattern as `vts_update_server_stats_ffi`: shared
     // memory wins when configured, otherwise fall back to the
     // process-local manager (the path exercised by unit tests).
-    if crate::shm::record_cache(zone_str, cache_status) {
+    if crate::shm::record_cache(zone_str, cache_status, max_size, used_size) {
         return;
     }
     CACHE_MANAGER.update_cache_stats(zone_str, status_str);
+    CACHE_MANAGER.update_cache_size(zone_str, max_size, used_size);
 }
 
 /// Update cache size information for a specific zone

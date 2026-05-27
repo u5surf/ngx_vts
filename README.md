@@ -88,6 +88,9 @@ model without nginx.
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
   workers, exposed as `nginx_vts_cache_requests_total` plus
   `nginx_vts_cache_hit_ratio`.
+- **Cache size gauges** per cache zone — `proxy_cache_path max_size=…`
+  and current on-disk usage (`sh->size × bsize`) exposed as
+  `nginx_vts_cache_size_bytes{type="max"}` and `{type="used"}`.
 - **Per-attempt upstream tracking** — `u->states` is iterated so each
   retry attempt (e.g. `502` from peer A followed by `200` from peer B)
   contributes its own sample to the upstream counters, instead of only
@@ -316,9 +319,6 @@ The list below tracks known gaps relative to the original
   cannot rate-limit responses.
 
 ### Metric coverage
-- Cache size gauges (`max_size` / `used_size` from
-  `ngx_http_file_cache_t`) — emitted but stay at 0; only the hit/miss
-  counters are wired up.
 - Upstream peer state (`down`, `weight`, `max_fails`,
   `fail_timeout`, `backup`) is not yet read from the nginx upstream
   configuration.

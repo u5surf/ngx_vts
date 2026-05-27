@@ -233,9 +233,10 @@ impl UpstreamCounters {
 
 /// Per cache-zone counters stored as the value in the `caches` map.
 ///
-/// Mirrors the variants nginx exposes via `$upstream_cache_status`
-/// (1=MISS .. 8=SCARCE); a value of 0 means "no cache" and is filtered
-/// at the call site rather than counted here.
+/// Status counters mirror the variants nginx exposes via
+/// `$upstream_cache_status` (1=MISS .. 8=SCARCE); `max_size` and
+/// `used_size` are snapshots of the file cache state and are
+/// overwritten (not accumulated) on every observation.
 #[derive(Clone, Copy)]
 pub struct CacheCounters {
     pub miss: u64,
@@ -246,6 +247,11 @@ pub struct CacheCounters {
     pub revalidated: u64,
     pub hit: u64,
     pub scarce: u64,
+    /// Configured `proxy_cache_path max_size=...`, in bytes.
+    pub max_size: u64,
+    /// Current on-disk usage of this cache, in bytes (approximated as
+    /// `sh->size * bsize` from the file cache shared header).
+    pub used_size: u64,
 }
 
 impl CacheCounters {
@@ -259,14 +265,17 @@ impl CacheCounters {
             revalidated: 0,
             hit: 0,
             scarce: 0,
+            max_size: 0,
+            used_size: 0,
         }
     }
 
     /// Apply one cache-status observation.  `status` is the raw
     /// `ngx_uint_t` from `r->upstream->cache_status` (the same numeric
     /// scheme `$upstream_cache_status` is derived from).  Unknown
-    /// values are ignored.
-    fn update(&mut self, status: u8) {
+    /// status values are ignored, but size fields are always updated
+    /// (they reflect the current cache state, not request history).
+    fn update(&mut self, status: u8, max_size: u64, used_size: u64) {
         match status {
             1 => self.miss += 1,
             2 => self.bypass += 1,
@@ -278,6 +287,8 @@ impl CacheCounters {
             8 => self.scarce += 1,
             _ => {}
         }
+        self.max_size = max_size;
+        self.used_size = used_size;
     }
 
     /// Convert into the output-side struct that the Prometheus formatter
@@ -294,6 +305,8 @@ impl CacheCounters {
             hit: self.hit,
             scarce: self.scarce,
         };
+        out.size.max_size = self.max_size;
+        out.size.used_size = self.used_size;
         out
     }
 }
@@ -480,12 +493,14 @@ pub fn record_upstream(
     false
 }
 
-/// Record one cache-status observation into shared memory.  Returns
-/// `false` when no `vts_zone` is configured so the caller can fall back
-/// to the process-local `CACHE_MANAGER`.  Oversized zone names and
-/// out-of-memory inserts are silently dropped while reporting `true`.
+/// Record one cache-status observation into shared memory together
+/// with the current `max_size` / `used_size` of the file cache.
+/// Returns `false` when no `vts_zone` is configured so the caller
+/// can fall back to the process-local `CACHE_MANAGER`.  Oversized
+/// zone names and out-of-memory inserts are silently dropped while
+/// reporting `true`.
 #[cfg(not(test))]
-pub fn record_cache(zone: &str, status: u8) -> bool {
+pub fn record_cache(zone: &str, status: u8, max_size: u64, used_size: u64) -> bool {
     let Some(shared) = shared() else {
         return false;
     };
@@ -497,7 +512,7 @@ pub fn record_cache(zone: &str, status: u8) -> bool {
     let mut guard = shared.caches.write();
 
     if let Some(entry) = guard.get_mut(key_bytes) {
-        entry.update(status);
+        entry.update(status, max_size, used_size);
         return true;
     }
 
@@ -506,14 +521,14 @@ pub fn record_cache(zone: &str, status: u8) -> bool {
         return true;
     };
     let mut counters = CacheCounters::new();
-    counters.update(status);
+    counters.update(status, max_size, used_size);
     let _ = guard.try_insert(key, counters);
     true
 }
 
 /// Test-only stub.  See [`record_server`].
 #[cfg(test)]
-pub fn record_cache(_zone: &str, _status: u8) -> bool {
+pub fn record_cache(_zone: &str, _status: u8, _max_size: u64, _used_size: u64) -> bool {
     false
 }
 
@@ -939,18 +954,18 @@ mod tests {
         assert!(snapshot_caches().is_none());
         assert!(!record_server("test", 200, 0, 0, 0));
         assert!(!record_upstream("u", "s", 0, 0, 0, 0, 200));
-        assert!(!record_cache("zone", 7));
+        assert!(!record_cache("zone", 7, 0, 0));
     }
 
     #[test]
     fn cache_counters_accumulate_correctly() {
         let mut c = CacheCounters::new();
         // Two HITs, one MISS, one BYPASS, one EXPIRED.
-        c.update(7);
-        c.update(7);
-        c.update(1);
-        c.update(2);
-        c.update(3);
+        c.update(7, 0, 0);
+        c.update(7, 0, 0);
+        c.update(1, 0, 0);
+        c.update(2, 0, 0);
+        c.update(3, 0, 0);
 
         assert_eq!(c.hit, 2);
         assert_eq!(c.miss, 1);
@@ -966,7 +981,7 @@ mod tests {
     fn cache_counters_cover_all_variants() {
         let mut c = CacheCounters::new();
         for status in 1u8..=8 {
-            c.update(status);
+            c.update(status, 0, 0);
         }
         assert_eq!(c.miss, 1);
         assert_eq!(c.bypass, 1);
@@ -981,9 +996,9 @@ mod tests {
     #[test]
     fn cache_counters_ignore_unknown_status() {
         let mut c = CacheCounters::new();
-        c.update(0); // "no cache" sentinel
-        c.update(9); // out-of-range
-        c.update(7); // HIT
+        c.update(0, 0, 0); // "no cache" sentinel
+        c.update(9, 0, 0); // out-of-range
+        c.update(7, 0, 0); // HIT
         assert_eq!(c.hit, 1);
         // No other counter incremented.
         assert_eq!(
@@ -995,10 +1010,10 @@ mod tests {
     #[test]
     fn cache_counters_into_stats() {
         let mut c = CacheCounters::new();
-        c.update(7);
-        c.update(7);
-        c.update(1);
-        c.update(2);
+        c.update(7, 0, 0);
+        c.update(7, 0, 0);
+        c.update(1, 0, 0);
+        c.update(2, 0, 0);
 
         let stats = c.into_stats("my_cache");
         assert_eq!(stats.name, "my_cache");
@@ -1007,20 +1022,48 @@ mod tests {
         assert_eq!(stats.cache.bypass, 1);
         assert_eq!(stats.cache.total_requests(), 4);
         assert_eq!(stats.cache.hit_ratio(), 50.0);
-        // Size remains default — this PR doesn't wire up cache size.
+        // Size stayed at 0 because the test passed 0 for both
+        // max_size and used_size on every update.
         assert_eq!(stats.size.max_size, 0);
         assert_eq!(stats.size.used_size, 0);
     }
 
     #[test]
+    fn cache_counters_overwrite_size_each_update() {
+        let mut c = CacheCounters::new();
+        // First request: cache reports 10 MB max, 0 used.
+        c.update(1, 10 * 1024 * 1024, 0);
+        assert_eq!(c.max_size, 10 * 1024 * 1024);
+        assert_eq!(c.used_size, 0);
+
+        // Later request: same cache now reports some usage.
+        c.update(7, 10 * 1024 * 1024, 512 * 1024);
+        assert_eq!(c.max_size, 10 * 1024 * 1024);
+        assert_eq!(c.used_size, 512 * 1024);
+
+        // Status counters accumulated separately.
+        assert_eq!(c.miss, 1);
+        assert_eq!(c.hit, 1);
+    }
+
+    #[test]
+    fn cache_counters_into_stats_carries_size() {
+        let mut c = CacheCounters::new();
+        c.update(7, 10 * 1024 * 1024, 2 * 1024 * 1024);
+        let stats = c.into_stats("sized");
+        assert_eq!(stats.size.max_size, 10 * 1024 * 1024);
+        assert_eq!(stats.size.used_size, 2 * 1024 * 1024);
+    }
+
+    #[test]
     fn build_cache_snapshot_converts_entries() {
         let mut c1 = CacheCounters::new();
-        c1.update(7);
-        c1.update(7);
-        c1.update(1);
+        c1.update(7, 0, 0);
+        c1.update(7, 0, 0);
+        c1.update(1, 0, 0);
         let mut c2 = CacheCounters::new();
-        c2.update(2);
-        c2.update(2);
+        c2.update(2, 0, 0);
+        c2.update(2, 0, 0);
 
         let entries: Vec<(&[u8], &CacheCounters)> =
             vec![(b"static".as_ref(), &c1), (b"api".as_ref(), &c2)];

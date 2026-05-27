@@ -32,7 +32,9 @@ extern void vts_update_server_stats_ffi(
 
 extern void vts_update_cache_stats_ffi(
     const char* zone_name,
-    uint8_t cache_status
+    uint8_t cache_status,
+    uint64_t max_size,
+    uint64_t used_size
 );
 
 // External Rust initialization function
@@ -191,21 +193,39 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     // configured, or the request bypassed cache lookup before nginx
     // assigned a status), so skip it.  Cache zone name is the shared
     // memory zone declared by `proxy_cache_path ... keys_zone=NAME:SIZE`.
+    //
+    // We also forward `max_size` and the current `used_size` so
+    // `nginx_vts_cache_size_bytes{type="max"}` / `{type="used"}`
+    // reflect reality.  Note that both `fc->max_size` and
+    // `fc->sh->size` are kept in **cache blocks** by nginx
+    // internally (the file cache manager divides `max_size` by
+    // `bsize` during init for direct comparison against `sh->size`),
+    // so we multiply each by `bsize` to recover bytes.
     if (u->cache_status != 0
         && r->cache != NULL
         && r->cache->file_cache != NULL
         && r->cache->file_cache->shm_zone != NULL)
     {
-        ngx_str_t *cz_name = &r->cache->file_cache->shm_zone->shm.name;
+        ngx_http_file_cache_t *fc = r->cache->file_cache;
+        ngx_str_t *cz_name = &fc->shm_zone->shm.name;
         u_char cache_zone_buf[256];
 
         if (cz_name->len > 0 && cz_name->len < sizeof(cache_zone_buf) - 1) {
             ngx_memcpy(cache_zone_buf, cz_name->data, cz_name->len);
             cache_zone_buf[cz_name->len] = '\0';
 
+            uint64_t bsize = (uint64_t) fc->bsize;
+            uint64_t max_size = (uint64_t) fc->max_size * bsize;
+            uint64_t used_size = 0;
+            if (fc->sh != NULL) {
+                used_size = (uint64_t) fc->sh->size * bsize;
+            }
+
             vts_update_cache_stats_ffi(
                 (const char *)cache_zone_buf,
-                (uint8_t)u->cache_status
+                (uint8_t)u->cache_status,
+                max_size,
+                used_size
             );
         }
     }
