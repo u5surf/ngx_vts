@@ -23,24 +23,6 @@ mod stats;
 mod upstream_stats;
 mod vts_node;
 
-#[cfg(test)]
-include!("../test_issue1_resolution.rs");
-
-#[cfg(test)]
-include!("../test_issue2_resolution.rs");
-
-#[cfg(test)]
-include!("../test_issue3_resolution.rs");
-
-#[cfg(test)]
-include!("../test_issue3_integrated_flow.rs");
-
-#[cfg(test)]
-include!("../test_log_phase_handler.rs");
-
-#[cfg(test)]
-include!("../test_cache_stats.rs");
-
 /// Calculate request time difference in milliseconds
 /// This implements the nginx-module-vts time calculation logic
 fn calculate_time_diff_ms(
@@ -750,6 +732,443 @@ mod integration_tests {
         assert!(content.contains("# TYPE nginx_vts_server_requests_total counter"));
         assert!(content.contains("# HELP nginx_vts_server_bytes_total Total bytes transferred"));
         assert!(content.contains("# TYPE nginx_vts_server_bytes_total counter"));
+    }
+
+    // ---------- helpers ----------
+
+    fn reset_manager() {
+        let mut manager = match VTS_MANAGER.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *manager = VtsStatsManager::new();
+    }
+
+    // ---------- upstream + Prometheus rendering ----------
+
+    #[test]
+    fn test_bulk_upstream_requests_render_correctly() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+
+        for i in 0..500 {
+            let status_code = if i % 50 == 0 {
+                500
+            } else if i % 20 == 0 {
+                404
+            } else {
+                200
+            };
+            let request_time = 40 + (i % 30);
+            let upstream_time = request_time / 2;
+            update_upstream_zone_stats(
+                "backend",
+                "127.0.0.1:8080",
+                request_time,
+                upstream_time,
+                1500,
+                750,
+                status_code,
+            );
+        }
+
+        let s = generate_vts_status_content();
+        assert!(s.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 500"
+        ));
+        assert!(s.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 375000"));
+        assert!(s.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 750000"));
+        assert!(s.contains(
+            "nginx_vts_upstream_server_up{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
+        ));
+    }
+
+    #[test]
+    fn test_no_upstream_metrics_until_first_request() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+
+        let content = generate_vts_status_content();
+        // Pre-request render must NOT emit per-(upstream,server) request counters.
+        assert!(!content.contains("nginx_vts_upstream_requests_total{"));
+        // But the basic headers and module info are always present.
+        assert!(content.contains("# nginx-vts-rust"));
+        assert!(content.contains("# VTS Status: Active"));
+        assert!(content.contains("# HELP nginx_vts_info"));
+    }
+
+    #[test]
+    fn test_upstream_counters_accumulate_across_requests() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+
+        update_upstream_zone_stats("backend", "127.0.0.1:8080", 85, 42, 1024, 512, 200);
+        let after_one = generate_vts_status_content();
+        assert!(after_one.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
+        ));
+        assert!(after_one.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 512"));
+
+        update_upstream_zone_stats("backend", "127.0.0.1:8080", 92, 48, 1536, 768, 200);
+        let after_two = generate_vts_status_content();
+        assert!(after_two.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 2"
+        ));
+        assert!(after_two.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 1280"));
+        assert!(after_two.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 2560"));
+        assert!(after_two.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
+    }
+
+    #[test]
+    fn test_vts_track_upstream_request_ffi_records_into_state() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+
+        let upstream_name = std::ffi::CString::new("backend").unwrap();
+        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
+
+        unsafe {
+            vts_track_upstream_request(
+                upstream_name.as_ptr(),
+                server_addr.as_ptr(),
+                1000,
+                500,
+                38,
+                2048,
+                1024,
+                200,
+            );
+        }
+
+        let content = generate_vts_status_content();
+        assert!(content.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
+        ));
+        assert!(content.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 1024"));
+        assert!(content.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 2048"));
+    }
+
+    #[test]
+    fn test_initialize_upstream_zones_seeds_zero_metrics() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+
+        // Before init: no per-server series.
+        let before = generate_vts_status_content();
+        assert!(before.contains("nginx_vts_upstream_zones_total 0"));
+
+        initialize_upstream_zones_for_testing();
+        let after = generate_vts_status_content();
+
+        // Should now render the configured backend with zero counters.
+        assert!(after.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"
+        ));
+        assert!(after.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 0"));
+        assert!(after.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 0"));
+        assert!(after.contains(
+            "nginx_vts_upstream_server_up{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
+        ));
+        // All status-class buckets exist with 0.
+        for class in ["1xx", "2xx", "3xx", "4xx", "5xx"] {
+            let expected = format!(
+                "nginx_vts_upstream_responses_total{{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"{}\"}} 0",
+                class
+            );
+            assert!(after.contains(&expected), "missing {class}");
+        }
+    }
+
+    #[test]
+    fn test_status_response_includes_help_and_type_headers() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+        initialize_upstream_zones_for_testing();
+
+        let content = generate_vts_status_content();
+        for header in [
+            "# HELP nginx_vts_upstream_requests_total Total upstream requests",
+            "# TYPE nginx_vts_upstream_requests_total counter",
+            "# HELP nginx_vts_upstream_bytes_total Total bytes transferred to/from upstream",
+            "# HELP nginx_vts_upstream_response_seconds Upstream response time statistics",
+            "# HELP nginx_vts_upstream_server_up Upstream server status (1=up, 0=down)",
+            "# HELP nginx_vts_upstream_responses_total Upstream responses by status code",
+        ] {
+            assert!(content.contains(header), "missing header: {header}");
+        }
+    }
+
+    #[test]
+    fn test_complete_status_flow_init_request_then_recorded() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+        initialize_upstream_zones_for_testing();
+
+        // Step 1: fresh status → zero counters.
+        let first = generate_vts_status_content();
+        assert!(first.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"
+        ));
+
+        // Step 2: simulate a 94ms request through the upstream.
+        update_upstream_zone_stats("backend", "127.0.0.1:8080", 94, 30, 1370, 615, 200);
+
+        // Step 3: counters reflect the request.
+        let third = generate_vts_status_content();
+        assert!(third.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
+        ));
+        assert!(third.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 615"));
+        assert!(third.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 1370"));
+        assert!(third.contains("nginx_vts_upstream_response_seconds{upstream=\"backend\",server=\"127.0.0.1:8080\",type=\"request_avg\"} 0.094000"));
+        assert!(third.contains("nginx_vts_upstream_response_seconds{upstream=\"backend\",server=\"127.0.0.1:8080\",type=\"upstream_avg\"} 0.030000"));
+    }
+
+    #[test]
+    fn test_log_phase_ffi_accumulates_across_calls() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+        initialize_upstream_zones_for_testing();
+
+        let upstream_name = std::ffi::CString::new("backend").unwrap();
+        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
+
+        // Three sequential LOG_PHASE-style calls with mixed statuses.
+        let calls: &[(u64, u64, u64, u64, u16)] = &[
+            (500, 42, 1024, 512, 200),
+            (600, 55, 2048, 1024, 200),
+            (700, 48, 1536, 768, 404),
+        ];
+        for &(start_msec, response_ms, bytes_sent, bytes_received, status) in calls {
+            unsafe {
+                vts_track_upstream_request(
+                    upstream_name.as_ptr(),
+                    server_addr.as_ptr(),
+                    1000,
+                    start_msec,
+                    response_ms,
+                    bytes_sent,
+                    bytes_received,
+                    status,
+                );
+            }
+        }
+
+        let content = generate_vts_status_content();
+        assert!(content.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 3"
+        ));
+        // 512 + 1024 + 768 = 2304 in / 1024 + 2048 + 1536 = 4608 out.
+        assert!(content.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 2304"));
+        assert!(content.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 4608"));
+        // 2 × 2xx + 1 × 4xx.
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"4xx\"} 1"));
+    }
+
+    #[test]
+    fn test_log_phase_ffi_categorises_diverse_status_codes() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_manager();
+        initialize_upstream_zones_for_testing();
+
+        let upstream_name = std::ffi::CString::new("backend").unwrap();
+        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
+
+        // 2 baseline 200s with extreme timings, then 8 mixed statuses.
+        let scenarios: &[(u64, u64, u64, u64, u16)] = &[
+            (0, 100, 50, 1, 200),                 // sub-ms upstream
+            (1800, 1_048_576, 2_097_152, 1, 200), // ~1.8s upstream, MBs
+            (25, 200, 100, 1, 301),
+            (25, 200, 100, 1, 302),
+            (25, 200, 100, 1, 400),
+            (25, 200, 100, 1, 401),
+            (25, 200, 100, 1, 403),
+            (25, 200, 100, 1, 500),
+            (25, 200, 100, 1, 502),
+            (25, 200, 100, 1, 503),
+        ];
+        for &(response_ms, bytes_sent, bytes_received, start_msec, status) in scenarios {
+            unsafe {
+                vts_track_upstream_request(
+                    upstream_name.as_ptr(),
+                    server_addr.as_ptr(),
+                    1000,
+                    start_msec,
+                    response_ms,
+                    bytes_sent,
+                    bytes_received,
+                    status,
+                );
+            }
+        }
+
+        let content = generate_vts_status_content();
+        assert!(content.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 10"
+        ));
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"2xx\"} 2"));
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"3xx\"} 2"));
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"4xx\"} 3"));
+        assert!(content.contains("nginx_vts_upstream_responses_total{upstream=\"backend\",server=\"127.0.0.1:8080\",status=\"5xx\"} 3"));
+    }
+
+    // ---------- cache stats ----------
+
+    #[test]
+    fn test_cache_stats_basic_functionality() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CACHE_MANAGER.clear();
+
+        update_cache_stats("zone1", "HIT");
+        update_cache_stats("zone1", "HIT");
+        update_cache_stats("zone1", "MISS");
+        update_cache_stats("zone1", "BYPASS");
+        update_cache_size("zone1", 1_048_576, 524_288);
+
+        let cache_zones = get_all_cache_zones();
+        assert_eq!(cache_zones.len(), 1);
+        let zone1 = cache_zones.get("zone1").unwrap();
+        assert_eq!(zone1.name, "zone1");
+        assert_eq!(zone1.cache.hit, 2);
+        assert_eq!(zone1.cache.miss, 1);
+        assert_eq!(zone1.cache.bypass, 1);
+        assert_eq!(zone1.cache.total_requests(), 4);
+        assert_eq!(zone1.cache.hit_ratio(), 50.0);
+        assert_eq!(zone1.size.max_size, 1_048_576);
+        assert_eq!(zone1.size.used_size, 524_288);
+        assert_eq!(zone1.size.utilization_percentage(), 50.0);
+    }
+
+    #[test]
+    fn test_cache_stats_multiple_zones() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CACHE_MANAGER.clear();
+
+        update_cache_stats("zone1", "HIT");
+        update_cache_stats("zone1", "MISS");
+        update_cache_stats("zone2", "HIT");
+        update_cache_stats("zone2", "HIT");
+        update_cache_stats("zone2", "HIT");
+        update_cache_size("zone1", 1_048_576, 262_144);
+        update_cache_size("zone2", 2_097_152, 1_572_864);
+
+        let cache_zones = get_all_cache_zones();
+        assert_eq!(cache_zones.len(), 2);
+
+        let zone1 = cache_zones.get("zone1").unwrap();
+        assert_eq!(zone1.cache.hit, 1);
+        assert_eq!(zone1.cache.miss, 1);
+        assert_eq!(zone1.cache.hit_ratio(), 50.0);
+
+        let zone2 = cache_zones.get("zone2").unwrap();
+        assert_eq!(zone2.cache.hit, 3);
+        assert_eq!(zone2.cache.miss, 0);
+        assert_eq!(zone2.cache.hit_ratio(), 100.0);
+        assert_eq!(zone2.size.utilization_percentage(), 75.0);
+    }
+
+    #[test]
+    fn test_cache_stats_all_status_variants() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CACHE_MANAGER.clear();
+
+        for status in [
+            "HIT",
+            "MISS",
+            "BYPASS",
+            "EXPIRED",
+            "STALE",
+            "UPDATING",
+            "REVALIDATED",
+            "SCARCE",
+        ] {
+            update_cache_stats("comprehensive_zone", status);
+        }
+
+        let cache_zones = get_all_cache_zones();
+        let zone = cache_zones.get("comprehensive_zone").unwrap();
+        assert_eq!(zone.cache.hit, 1);
+        assert_eq!(zone.cache.miss, 1);
+        assert_eq!(zone.cache.bypass, 1);
+        assert_eq!(zone.cache.expired, 1);
+        assert_eq!(zone.cache.stale, 1);
+        assert_eq!(zone.cache.updating, 1);
+        assert_eq!(zone.cache.revalidated, 1);
+        assert_eq!(zone.cache.scarce, 1);
+        assert_eq!(zone.cache.total_requests(), 8);
+        assert_eq!(zone.cache.hit_ratio(), 12.5);
+    }
+
+    #[test]
+    fn test_cache_metrics_appear_in_status_output() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CACHE_MANAGER.clear();
+        reset_manager();
+
+        update_cache_stats("test_cache", "HIT");
+        update_cache_stats("test_cache", "HIT");
+        update_cache_stats("test_cache", "MISS");
+        update_cache_size("test_cache", 1_048_576, 524_288);
+
+        let content = generate_vts_status_content();
+        assert!(content.contains("# HELP nginx_vts_cache_requests_total"));
+        assert!(content.contains("# TYPE nginx_vts_cache_requests_total counter"));
+        assert!(content
+            .contains("nginx_vts_cache_requests_total{zone=\"test_cache\",status=\"hit\"} 2"));
+        assert!(content
+            .contains("nginx_vts_cache_requests_total{zone=\"test_cache\",status=\"miss\"} 1"));
+        assert!(content.contains("# HELP nginx_vts_cache_size_bytes"));
+        assert!(content.contains("# TYPE nginx_vts_cache_size_bytes gauge"));
+        assert!(content
+            .contains("nginx_vts_cache_size_bytes{zone=\"test_cache\",type=\"max\"} 1048576"));
+        assert!(content
+            .contains("nginx_vts_cache_size_bytes{zone=\"test_cache\",type=\"used\"} 524288"));
+        assert!(content.contains("# HELP nginx_vts_cache_hit_ratio"));
+        assert!(content.contains("# TYPE nginx_vts_cache_hit_ratio gauge"));
+        assert!(content.contains("nginx_vts_cache_hit_ratio{zone=\"test_cache\"} 66.67"));
+    }
+
+    #[test]
+    fn test_empty_cache_metrics_emit_headers() {
+        let _lock = GLOBAL_VTS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CACHE_MANAGER.clear();
+        reset_manager();
+
+        let content = generate_vts_status_content();
+        // Headers always emitted, even with no recorded cache zones.
+        assert!(content.contains("# HELP nginx_vts_cache_requests_total"));
+        assert!(content.contains("# TYPE nginx_vts_cache_requests_total counter"));
+        assert!(content.contains("# HELP nginx_vts_cache_size_bytes"));
+        assert!(content.contains("# TYPE nginx_vts_cache_size_bytes gauge"));
     }
 }
 
