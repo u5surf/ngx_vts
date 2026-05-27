@@ -98,14 +98,21 @@ ngx_http_vts_status_handler(ngx_http_request_t *r)
     ngx_int_t rc;
     ngx_buf_t *b;
     ngx_chain_t out;
-    
+
     // Rust function to get status output
     extern const char* ngx_http_vts_get_status();
-    
+
     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
         return NGX_HTTP_NOT_ALLOWED;
     }
-    
+
+    // Mark the request so the LOG_PHASE handler can recognise its
+    // own scrape and skip the server-zone update — otherwise
+    // Prometheus scrapes would inflate `nginx_vts_server_requests_total`.
+    // Any non-NULL value works; we use the static handler address
+    // because it's a unique, readily-available sentinel.
+    ngx_http_set_ctx(r, (void *) ngx_http_vts_status_handler, ngx_http_vts_module);
+
     rc = ngx_http_discard_request_body(r);
     if (rc != NGX_OK) {
         return rc;

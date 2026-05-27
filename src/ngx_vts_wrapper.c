@@ -35,8 +35,14 @@ extern void vts_update_cache_stats_ffi(
     uint8_t cache_status
 );
 
-// External Rust initialization function  
+// External Rust initialization function
 extern ngx_int_t ngx_http_vts_init_rust_module(ngx_conf_t *cf);
+
+// Module struct defined in ngx_http_vts_module.c.  We consult its
+// per-request ctx slot to detect requests served by the vts_status
+// content handler (so Prometheus scrapes don't inflate server_zone
+// counters).
+extern ngx_module_t ngx_http_vts_module;
 
 /*
  * LOG_PHASE handler implementation
@@ -51,6 +57,9 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     ngx_str_t upstream_name = ngx_null_string;
     u_char upstream_name_buf[256];
     u_char server_addr_buf[256];
+    u_char server_name_buf[256];
+    ngx_http_core_srv_conf_t *cscf;
+    ngx_str_t server_zone;
 
     // Count each user-facing request exactly once.  nginx fires the
     // LOG_PHASE handler for every subrequest as well as the main
@@ -62,7 +71,58 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    // Only process requests that used upstream
+    // Skip Prometheus scrapes: the vts_status content handler sets
+    // a non-NULL ctx on the request before rendering, which lets us
+    // exclude /status from server_zone counters here.  Otherwise
+    // every scrape would inflate `nginx_vts_server_requests_total`
+    // for whichever vhost hosts /status.
+    if (ngx_http_get_module_ctx(r, ngx_http_vts_module) != NULL) {
+        return NGX_DECLINED;
+    }
+
+    // ----- server zone update (always for main requests) -----
+
+    // Key on the matched server block's first `server_name` rather
+    // than the raw `Host` header (`r->headers_in.server`): that
+    // header is attacker-controlled and has unbounded cardinality,
+    // which would let any client trivially blow up the shared table
+    // by sending varying Host values.
+    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+    if (cscf != NULL && cscf->server_name.len > 0) {
+        server_zone = cscf->server_name;
+    } else {
+        ngx_str_set(&server_zone, "_");
+    }
+
+    if (server_zone.len > 0 && server_zone.len < sizeof(server_name_buf) - 1) {
+        ngx_memcpy(server_name_buf, server_zone.data, server_zone.len);
+        server_name_buf[server_zone.len] = '\0';
+    } else {
+        ngx_cpystrn(server_name_buf, (u_char*)"_", sizeof(server_name_buf));
+    }
+
+    // Calculate total request time in milliseconds using nginx's builtin calculation
+    ngx_msec_t request_time;
+    ngx_time_t *tp = ngx_timeofday();
+    request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
+
+    // Get response status (use r->headers_out.status if available, otherwise default)
+    ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : 200;
+
+    // Calculate bytes sent and received for this request
+    off_t bytes_in = r->request_length;
+    off_t bytes_out = r->connection->sent;
+
+    vts_update_server_stats_ffi(
+        (const char*)server_name_buf,
+        (uint16_t)response_status,
+        (uint64_t)bytes_in,
+        (uint64_t)bytes_out,
+        (uint64_t)request_time
+    );
+
+    // ----- upstream + cache updates (only when upstream framework was used) -----
+
     u = r->upstream;
     if (u == NULL) {
         return NGX_DECLINED;
@@ -81,52 +141,6 @@ ngx_http_vts_log_handler(ngx_http_request_t *r)
     } else {
         upstream_name_buf[0] = '\0';
     }
-
-    // Update server zone statistics for all requests.
-    //
-    // Key on the matched server block's first `server_name` rather than
-    // the raw `Host` header (`r->headers_in.server`): that header is
-    // attacker-controlled and has unbounded cardinality, which would let
-    // any client trivially blow up the shared table by sending varying
-    // Host values.
-    u_char server_name_buf[256];
-    ngx_http_core_srv_conf_t *cscf;
-    ngx_str_t server_zone;
-
-    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
-    if (cscf != NULL && cscf->server_name.len > 0) {
-        server_zone = cscf->server_name;
-    } else {
-        ngx_str_set(&server_zone, "_");
-    }
-
-    if (server_zone.len > 0 && server_zone.len < sizeof(server_name_buf) - 1) {
-        ngx_memcpy(server_name_buf, server_zone.data, server_zone.len);
-        server_name_buf[server_zone.len] = '\0';
-    } else {
-        ngx_cpystrn(server_name_buf, (u_char*)"_", sizeof(server_name_buf));
-    }
-
-    // Calculate total request time in milliseconds using nginx's builtin calculation
-    ngx_msec_t request_time = 0;
-    // Always calculate request time using request start time
-    ngx_time_t *tp = ngx_timeofday();
-    request_time = (ngx_msec_t) ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
-    
-    // Get response status (use r->headers_out.status if available, otherwise default)
-    ngx_uint_t response_status = r->headers_out.status ? r->headers_out.status : 200;
-
-    // Calculate bytes sent and received for this request
-    off_t bytes_in = r->request_length;
-    off_t bytes_out = r->connection->sent;
-
-    vts_update_server_stats_ffi(
-        (const char*)server_name_buf,
-        (uint16_t)response_status,
-        (uint64_t)bytes_in,
-        (uint64_t)bytes_out,
-        (uint64_t)request_time
-    );
 
     // Walk `r->upstream_states` so each upstream attempt is recorded
     // as its own sample.  For requests with no retry this is one

@@ -85,10 +85,10 @@ rate panels should update.
 - A `127.0.0.1:18091` origin server in the same container so the
   example needs no extra service.
 - `location = /status { vts_status; access_log off; allow all; }` —
-  Prometheus scrape target; `access_log off` keeps the scrape itself
-  out of the access log, but note that the LOG_PHASE handler still
-  increments `nginx_vts_server_requests_total{zone="example.test"}`
-  for every scrape.
+  Prometheus scrape target.  `access_log off` keeps the scrape out
+  of the access log, and the LOG_PHASE handler also excludes /status
+  from `nginx_vts_server_requests_total` so scrape frequency does
+  not inflate the per-vhost counters.
 
 ## Stop
 
