@@ -18,7 +18,6 @@ use std::collections::HashMap;
 /// `vts_zone` is configured (and so unit tests, which never link
 /// the slab allocator, still have somewhere to write).
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct VtsStatsManager {
     /// Per server-zone counters keyed by `server_name`.
     pub stats: HashMap<String, ServerCounters>,
@@ -30,7 +29,6 @@ pub struct VtsStatsManager {
     pub connections: VtsConnectionStats,
 }
 
-#[allow(dead_code)]
 impl VtsStatsManager {
     /// Create a new VTS statistics manager
     pub fn new() -> Self {
@@ -89,7 +87,8 @@ impl VtsStatsManager {
         server_stats.update_timing(request_time, upstream_response_time);
     }
 
-    /// Get upstream zone statistics
+    /// Get upstream zone statistics (test helper).
+    #[cfg(test)]
     pub fn get_upstream_zone(&self, upstream_name: &str) -> Option<&UpstreamZone> {
         self.upstream_zones.get(upstream_name)
     }
@@ -102,13 +101,6 @@ impl VtsStatsManager {
     /// Get all upstream zones
     pub fn get_all_upstream_zones(&self) -> &HashMap<String, UpstreamZone> {
         &self.upstream_zones
-    }
-
-    /// Get or create upstream zone
-    pub fn get_or_create_upstream_zone(&mut self, upstream_name: &str) -> &mut UpstreamZone {
-        self.upstream_zones
-            .entry(upstream_name.to_string())
-            .or_insert_with(|| UpstreamZone::new(upstream_name))
     }
 
     /// Update connection statistics

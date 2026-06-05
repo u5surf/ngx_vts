@@ -238,7 +238,7 @@ impl CacheStatsManager {
     /// # Returns
     ///
     /// Option containing CacheZoneStats if zone exists
-    #[allow(dead_code)] // Used in tests
+    #[cfg(test)]
     pub fn get_cache_zone(&self, zone_name: &str) -> Option<CacheZoneStats> {
         let zones = self
             .cache_zones
@@ -261,7 +261,7 @@ impl CacheStatsManager {
     }
 
     /// Clear all cache statistics
-    #[allow(dead_code)] // Used in tests
+    #[cfg(test)]
     pub fn clear(&self) {
         let mut zones = self
             .cache_zones

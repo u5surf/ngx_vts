@@ -36,9 +36,11 @@ pub struct VtsResponseStats {
 /// Contains comprehensive metrics about a specific upstream server including
 /// request/response data, timing information, and nginx configuration status.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Some fields are for future nginx integration
 pub struct UpstreamServerStats {
-    /// Server address in format "host:port" (e.g., "10.10.10.11:80")
+    /// Server address in format "host:port" (e.g., "10.10.10.11:80").
+    /// Same value as the parent `UpstreamZone.servers` key; kept here
+    /// for symmetry with the JSON output that nginx-module-vts emits.
+    #[allow(dead_code)]
     pub server: String,
 
     /// Total number of requests sent to this server
@@ -70,16 +72,24 @@ pub struct UpstreamServerStats {
     /// implicit `+Inf` bucket equals `response_time_counter`.
     pub response_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 
+    // Upstream peer-state fields below are populated to defaults
+    // today and have no readers yet.  Wiring them up to the nginx
+    // upstream configuration (`ngx_http_upstream_server_t`) is one
+    // of the "What's not done yet" items in the top-level README.
     /// Server weight from nginx configuration
+    #[allow(dead_code)]
     pub weight: u32,
 
     /// Max fails setting from nginx configuration
+    #[allow(dead_code)]
     pub max_fails: u32,
 
     /// Fail timeout setting in seconds from nginx configuration
+    #[allow(dead_code)]
     pub fail_timeout: u32,
 
     /// Whether this server is marked as backup
+    #[allow(dead_code)]
     pub backup: bool,
 
     /// Whether this server is currently marked as down
@@ -91,9 +101,11 @@ pub struct UpstreamServerStats {
 /// Contains all server statistics for a named upstream group,
 /// allowing tracking of multiple servers within the same upstream block.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Some fields are for future nginx integration
 pub struct UpstreamZone {
-    /// Name of the upstream group (from nginx configuration)
+    /// Name of the upstream group (from nginx configuration).  Same
+    /// value as the parent `HashMap` key in `VtsStatsManager`; kept
+    /// here so the zone is self-describing for future JSON output.
+    #[allow(dead_code)]
     pub name: String,
 
     /// Map of server address to its statistics
@@ -176,7 +188,6 @@ impl UpstreamServerStats {
     /// # Returns
     ///
     /// Average request time in milliseconds, or 0.0 if no requests recorded
-    #[allow(dead_code)] // Used in prometheus formatter
     pub fn avg_request_time(&self) -> f64 {
         if self.request_time_counter > 0 {
             self.request_time_total as f64 / self.request_time_counter as f64
@@ -190,7 +201,6 @@ impl UpstreamServerStats {
     /// # Returns
     ///
     /// Average response time in milliseconds, or 0.0 if no responses recorded
-    #[allow(dead_code)] // Used in prometheus formatter
     pub fn avg_response_time(&self) -> f64 {
         if self.response_time_counter > 0 {
             self.response_time_total as f64 / self.response_time_counter as f64
@@ -232,12 +242,10 @@ impl UpstreamZone {
             .or_insert_with(|| UpstreamServerStats::new(server_addr))
     }
 
-    /// Get total request count for all servers in this upstream
-    ///
-    /// # Returns
-    ///
-    /// Sum of request counters from all servers
-    #[allow(dead_code)] // Used in tests and future integrations
+    /// Get total request count for all servers in this upstream.
+    /// Test helper — production aggregation happens in the
+    /// Prometheus formatter directly off the per-server counters.
+    #[cfg(test)]
     pub fn total_requests(&self) -> u64 {
         self.servers.values().map(|s| s.request_counter).sum()
     }
@@ -246,8 +254,9 @@ impl UpstreamZone {
     ///
     /// # Returns
     ///
-    /// Tuple of (total_in_bytes, total_out_bytes)
-    #[allow(dead_code)] // Used in tests and future integrations
+    /// Tuple of (total_in_bytes, total_out_bytes).  Test helper —
+    /// see [`UpstreamZone::total_requests`] for rationale.
+    #[cfg(test)]
     pub fn total_bytes(&self) -> (u64, u64) {
         let total_in = self.servers.values().map(|s| s.in_bytes).sum();
         let total_out = self.servers.values().map(|s| s.out_bytes).sum();

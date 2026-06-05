@@ -31,7 +31,6 @@ mod upstream;
 /// per metric family.  The method bodies live in the submodules
 /// listed above; this file holds the type and the `nginx_info`
 /// metric (which is the only one that doesn't take a per-zone map).
-#[allow(dead_code)] // All fields used in formatting
 pub struct PrometheusFormatter {
     /// Optional metric prefix (default: "nginx_vts_")
     pub metric_prefix: String,
@@ -46,7 +45,7 @@ impl PrometheusFormatter {
     }
 
     /// Create a new Prometheus formatter with custom metric prefix
-    #[allow(dead_code)] // Used in tests and future integrations
+    #[cfg(test)]
     pub fn with_prefix(prefix: &str) -> Self {
         Self {
             metric_prefix: prefix.to_string(),

@@ -14,7 +14,6 @@ impl PrometheusFormatter {
     /// Generates metrics for upstream servers including request counts,
     /// byte transfers, response times, status code class counts, and
     /// the response-duration histogram.
-    #[allow(dead_code)] // Used in tests and VTS integration
     pub fn format_upstream_stats(
         &self,
         upstream_zones: &HashMap<String, UpstreamZone>,
@@ -121,7 +120,6 @@ impl PrometheusFormatter {
     }
 
     /// `nginx_vts_upstream_responses_total{status="1xx"…"5xx"}` (class buckets).
-    #[allow(dead_code)] // Used in format_upstream_stats method
     fn format_upstream_status_metrics(
         &self,
         output: &mut String,
@@ -157,7 +155,6 @@ impl PrometheusFormatter {
     /// `nginx_vts_upstream_response_duration_seconds` classic
     /// histogram (`_bucket{le="..."}`, `_sum`, `_count`).  Compatible
     /// with `histogram_quantile()` for p50 / p90 / p99 panels.
-    #[allow(dead_code)] // Used in format_upstream_stats method
     fn format_upstream_response_histogram(
         &self,
         output: &mut String,

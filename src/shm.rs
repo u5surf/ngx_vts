@@ -356,7 +356,7 @@ static VTS_SHARED: AtomicPtr<VtsShared> = AtomicPtr::new(std::ptr::null_mut());
 
 /// True when a shared zone has been configured and recording will write
 /// into it.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn is_configured() -> bool {
     !VTS_SHARED.load(Ordering::Acquire).is_null()
 }

@@ -23,11 +23,9 @@ pub struct VtsResponseStats {
 
 /// Request-time aggregate (in seconds).
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // `total` is populated by storage layers; reserved for a future `..._seconds_sum` metric.
 pub struct VtsRequestTimes {
-    /// Sum of all observed request times.  Populated by the storage
-    /// layers; reserved for a future `..._seconds_sum` Prometheus
-    /// metric and otherwise unread today.
-    #[allow(dead_code)]
+    /// Sum of all observed request times.
     pub total: f64,
     /// Minimum observed request time (`0.0` if no requests yet).
     pub min: f64,
