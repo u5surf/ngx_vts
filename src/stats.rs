@@ -6,6 +6,8 @@
 //! formatter reads them.  Field shapes match what
 //! `nginx_vts_server_*` metrics need.
 
+use crate::upstream_stats::RESPONSE_TIME_BUCKET_COUNT;
+
 /// Per-status-class response counters.
 #[derive(Debug, Clone, Default)]
 pub struct VtsResponseStats {
@@ -48,8 +50,14 @@ pub struct VtsServerStats {
     pub bytes_out: u64,
     /// Per-status-class response breakdown.
     pub responses: VtsResponseStats,
-    /// Request-time aggregate.
+    /// Request-time aggregate (avg/min/max + `total` reserved for
+    /// `..._seconds_sum`).
     pub request_times: VtsRequestTimes,
+    /// Cumulative request-time bucket counts for the
+    /// `nginx_vts_server_request_duration_seconds` histogram.  Bound
+    /// `i` corresponds to
+    /// `upstream_stats::RESPONSE_TIME_BUCKET_BOUNDS_MS[i]`.
+    pub request_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 }
 
 /// Connection-state snapshot used by the Prometheus

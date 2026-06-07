@@ -87,10 +87,13 @@ model without nginx.
   so each retry attempt (e.g. `502` from peer A followed by `200`
   from peer B) contributes its own sample to the upstream counters,
   not just the final state.
-- **Upstream response time histogram** — classic Prometheus
-  `_bucket{le=...}` / `_sum` / `_count` over a fixed 11-bucket layout
-  (client_golang defaults), enabling
-  `histogram_quantile(0.99, ...)` for p50/p90/p99 panels.
+- **Upstream and server-zone request-time histograms** — classic
+  Prometheus `_bucket{le=...}` / `_sum` / `_count` over a shared
+  fixed 11-bucket layout (client_golang defaults), exposed as
+  `nginx_vts_upstream_response_duration_seconds_bucket{...}` and
+  `nginx_vts_server_request_duration_seconds_bucket{...}`.  Both
+  feed `histogram_quantile(0.99, ...)` for p50/p90/p99 panels per
+  upstream peer and per vhost.
 - **Cache hit/miss metrics** per cache zone (`proxy_cache_path
   keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
@@ -340,10 +343,9 @@ The list below tracks known gaps relative to the original
 - Per-status-code counters
   (`vhost_traffic_status_measure_status_codes`) — only the
   `1xx`/`2xx`/`3xx`/`4xx`/`5xx` class buckets are exposed.
-- Histogram coverage is limited to **upstream response time** with a
-  fixed 11-bucket layout (Prometheus client_golang defaults). No
-  server-zone request-time histogram, and no
-  `vts_histogram_buckets`-style directive to customise bounds.
+- Histogram bucket layout is fixed at the Prometheus
+  `client_golang` defaults (5ms..10s, 11 buckets). There is no
+  `vts_histogram_buckets`-style directive to customise the bounds.
 - Average method (`vhost_traffic_status_average_method` AMM / WMA) —
   averages are plain cumulative `sum / count`.
 - Embedded `$vts_*` variables for use in `log_format` / `if` —

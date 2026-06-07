@@ -1,9 +1,12 @@
-//! `nginx_vts_server_*` series (requests / bytes / responses / request_seconds).
+//! `nginx_vts_server_*` series — requests, bytes, responses,
+//! `request_seconds` summary, and the
+//! `request_duration_seconds` classic histogram.
 
 use std::collections::HashMap;
 
-use super::{label, PrometheusFormatter};
+use super::{format_le_bound, label, PrometheusFormatter};
 use crate::stats::VtsServerStats;
+use crate::upstream_stats::RESPONSE_TIME_BUCKET_BOUNDS_MS;
 
 impl PrometheusFormatter {
     /// Format server zone statistics into Prometheus metrics.
@@ -83,7 +86,56 @@ impl PrometheusFormatter {
         }
         output.push('\n');
 
+        // Server-zone request-time distribution (classic histogram).
+        self.format_server_request_histogram(&mut output, server_stats);
+
         output
+    }
+
+    /// `nginx_vts_server_request_duration_seconds` classic histogram
+    /// (`_bucket{le="..."}`, `_sum`, `_count`).  Mirrors the upstream
+    /// histogram layout so dashboards can share bucket definitions,
+    /// and enables `histogram_quantile()` for per-vhost p50/p90/p99.
+    fn format_server_request_histogram(
+        &self,
+        output: &mut String,
+        server_stats: &HashMap<String, VtsServerStats>,
+    ) {
+        let prefix = &self.metric_prefix;
+        output.push_str(&format!(
+            "# HELP {prefix}server_request_duration_seconds Server-zone request processing time distribution\n"
+        ));
+        output.push_str(&format!(
+            "# TYPE {prefix}server_request_duration_seconds histogram\n"
+        ));
+
+        for (zone, stats) in server_stats {
+            let zone = label::escape(zone);
+            for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+                let bound_s = bound_ms as f64 / 1000.0;
+                output.push_str(&format!(
+                    "{prefix}server_request_duration_seconds_bucket{{zone=\"{zone}\",le=\"{}\"}} {}\n",
+                    format_le_bound(bound_s),
+                    stats.request_buckets[i]
+                ));
+            }
+            // +Inf bucket = total request count.
+            output.push_str(&format!(
+                "{prefix}server_request_duration_seconds_bucket{{zone=\"{zone}\",le=\"+Inf\"}} {}\n",
+                stats.requests
+            ));
+            // `_sum` is the per-zone total seconds spent processing requests,
+            // already tracked in `request_times.total` (seconds).
+            output.push_str(&format!(
+                "{prefix}server_request_duration_seconds_sum{{zone=\"{zone}\"}} {:.6}\n",
+                stats.request_times.total
+            ));
+            output.push_str(&format!(
+                "{prefix}server_request_duration_seconds_count{{zone=\"{zone}\"}} {}\n",
+                stats.requests
+            ));
+        }
+        output.push('\n');
     }
 }
 
@@ -114,6 +166,10 @@ mod tests {
                     max: 0.250,
                     avg: 0.100,
                 },
+                // 42 samples distributed across buckets — values
+                // chosen so the histogram asserts below are crisp:
+                // monotone non-decreasing and ≤ 42.
+                request_buckets: [10, 20, 30, 35, 40, 41, 42, 42, 42, 42, 42],
             },
         );
 
@@ -134,6 +190,27 @@ mod tests {
         assert!(out.contains(
             "nginx_vts_server_request_seconds{zone=\"example.test\",type=\"min\"} 0.005000"
         ));
+
+        // Histogram: HELP/TYPE headers, a few representative
+        // buckets, +Inf, _sum, _count.
+        assert!(out.contains(
+            "# HELP nginx_vts_server_request_duration_seconds Server-zone request processing time distribution"
+        ));
+        assert!(out.contains("# TYPE nginx_vts_server_request_duration_seconds histogram"));
+        assert!(out.contains(
+            "nginx_vts_server_request_duration_seconds_bucket{zone=\"example.test\",le=\"0.005\"} 10"
+        ));
+        assert!(out.contains(
+            "nginx_vts_server_request_duration_seconds_bucket{zone=\"example.test\",le=\"0.1\"} 40"
+        ));
+        assert!(out.contains(
+            "nginx_vts_server_request_duration_seconds_bucket{zone=\"example.test\",le=\"+Inf\"} 42"
+        ));
+        assert!(out.contains(
+            "nginx_vts_server_request_duration_seconds_sum{zone=\"example.test\"} 4.200000"
+        ));
+        assert!(out
+            .contains("nginx_vts_server_request_duration_seconds_count{zone=\"example.test\"} 42"));
     }
 
     #[test]

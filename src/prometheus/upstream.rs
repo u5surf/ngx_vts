@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::{label, PrometheusFormatter};
+use super::{format_le_bound, label, PrometheusFormatter};
 use crate::upstream_stats::{UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
 
 impl PrometheusFormatter {
@@ -199,20 +199,6 @@ impl PrometheusFormatter {
     }
 }
 
-/// Format a histogram `le` bound (in seconds) as Prometheus expects
-/// — fixed-point with trailing zeros trimmed: `0.005`, `0.01`,
-/// `0.1`, `1`, `2.5`, `10`.  The rendering must be stable across
-/// scrapes so the time series doesn't fragment.
-fn format_le_bound(seconds: f64) -> String {
-    let formatted = format!("{seconds:.3}");
-    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
-    if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,16 +230,6 @@ mod tests {
         zone.servers.insert("10.0.0.1:80".to_string(), server1);
         zone.servers.insert("10.0.0.2:80".to_string(), server2);
         zone
-    }
-
-    #[test]
-    fn format_le_bound_trims_trailing_zeros() {
-        assert_eq!(format_le_bound(0.005), "0.005");
-        assert_eq!(format_le_bound(0.01), "0.01");
-        assert_eq!(format_le_bound(0.1), "0.1");
-        assert_eq!(format_le_bound(1.0), "1");
-        assert_eq!(format_le_bound(2.5), "2.5");
-        assert_eq!(format_le_bound(10.0), "10");
     }
 
     #[test]

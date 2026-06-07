@@ -76,6 +76,21 @@ impl Default for PrometheusFormatter {
     }
 }
 
+/// Format a histogram `le` bound (in seconds) as Prometheus expects
+/// — fixed-point with trailing zeros trimmed: `0.005`, `0.01`,
+/// `0.1`, `1`, `2.5`, `10`.  The rendering must be stable across
+/// scrapes so the time series doesn't fragment.  Used by both the
+/// upstream- and server-zone histogram formatters.
+pub(super) fn format_le_bound(seconds: f64) -> String {
+    let formatted = format!("{seconds:.3}");
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Generate VTS status content.
 ///
 /// Creates a comprehensive status report including server
@@ -207,5 +222,15 @@ mod tests {
         assert!(out.contains("# HELP nginx_vts_info Nginx VTS module information"));
         assert!(out.contains("# TYPE nginx_vts_info gauge"));
         assert!(out.contains("nginx_vts_info{hostname=\"h.example.test\",version=\"1.2.3\"} 1"));
+    }
+
+    #[test]
+    fn format_le_bound_trims_trailing_zeros() {
+        assert_eq!(format_le_bound(0.005), "0.005");
+        assert_eq!(format_le_bound(0.01), "0.01");
+        assert_eq!(format_le_bound(0.1), "0.1");
+        assert_eq!(format_le_bound(1.0), "1");
+        assert_eq!(format_le_bound(2.5), "2.5");
+        assert_eq!(format_le_bound(10.0), "10");
     }
 }

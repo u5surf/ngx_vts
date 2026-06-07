@@ -59,6 +59,12 @@ pub struct ServerCounters {
     pub request_time_total: u64,
     pub request_time_max: u64,
     pub request_time_min: u64,
+    /// Cumulative counts of request-time samples whose value in
+    /// milliseconds is `<= RESPONSE_TIME_BUCKET_BOUNDS_MS[i]`.  Reuses
+    /// the same bucket bounds as the upstream histogram so both
+    /// p50/p99 panels share a single layout.  The implicit `+Inf`
+    /// bucket equals `requests` (every sample is counted).
+    pub request_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 }
 
 impl ServerCounters {
@@ -75,6 +81,7 @@ impl ServerCounters {
             request_time_total: 0,
             request_time_max: 0,
             request_time_min: TIME_MIN_UNSET,
+            request_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
         }
     }
 
@@ -109,6 +116,7 @@ impl ServerCounters {
                 max: self.request_time_max as f64 / 1000.0,
                 avg,
             },
+            request_buckets: self.request_buckets,
         }
     }
 
@@ -122,6 +130,14 @@ impl ServerCounters {
         }
         if request_time < self.request_time_min {
             self.request_time_min = request_time;
+        }
+        // Histogram: every sample lands somewhere (sub-ms requests
+        // count in `le=0.005` and above).  `_count` is `requests` and
+        // `_sum` is `request_time_total / 1000`.
+        for (i, &bound) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+            if request_time <= bound {
+                self.request_buckets[i] += 1;
+            }
         }
         match status {
             100..=199 => self.status_1xx += 1,
@@ -845,6 +861,31 @@ mod tests {
         // Unset sentinel must surface as 0.0, not the f64 of u64::MAX.
         assert_eq!(stats.request_times.min, 0.0);
         assert_eq!(stats.request_times.avg, 0.0);
+    }
+
+    #[test]
+    fn server_counters_request_buckets_track_distribution() {
+        let mut c = ServerCounters::new();
+        // Samples (ms): 3, 7, 30, 75, 600, 50_000 — same distribution
+        // as the upstream histogram test, so we exercise the same
+        // bucket layout from the server side.
+        for sample in [3u64, 7, 30, 75, 600, 50_000] {
+            c.update(200, 0, 0, sample);
+        }
+
+        assert_eq!(c.requests, 6); // all 6 user requests counted
+        assert_eq!(c.request_buckets[0], 1); // le=5    → {3}
+        assert_eq!(c.request_buckets[1], 2); // le=10   → {3,7}
+        assert_eq!(c.request_buckets[2], 2); // le=25   → {3,7}
+        assert_eq!(c.request_buckets[3], 3); // le=50   → {3,7,30}
+        assert_eq!(c.request_buckets[4], 4); // le=100  → {3,7,30,75}
+        assert_eq!(c.request_buckets[5], 4); // le=250
+        assert_eq!(c.request_buckets[6], 4); // le=500
+        assert_eq!(c.request_buckets[7], 5); // le=1000 → +600
+        assert_eq!(c.request_buckets[8], 5); // le=2500
+        assert_eq!(c.request_buckets[9], 5); // le=5000
+        assert_eq!(c.request_buckets[10], 5); // le=10000
+                                              // 50_000 only shows up in the implicit +Inf bucket (= requests = 6).
     }
 
     #[test]
