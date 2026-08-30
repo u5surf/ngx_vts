@@ -36,6 +36,8 @@ cpanm --notest Test::Nginx
 | `005.cache_zones.t` | the cache half of `002.check_json_syntax.t` | MISS then HIT per cache zone, the full set of cache statuses, `max` and `used` size gauges, two zones counted apart |
 | `006.counter_accumulation.t` | the non-dump half of `042.dump.t` | counters keep running totals across requests rather than reporting the last one |
 | `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has left, and how many entries it holds |
+| `008.upstream_next_attempts.t` | `045.upstream_next_attempts.t` | a request that `proxy_next_upstream` passed on is counted against the peer it was passed on from, with that attempt's own status and no bytes |
+| `009.upstream_resolve.t` | `028.upstream_resolve.t` | peers resolved at run time are counted, and a peer replaced by a re-resolve keeps its numbers |
 
 ## What is not ported, and why
 
@@ -54,7 +56,7 @@ Nothing to port rather than something left undone.
 | `017`–`019` | `vhost_traffic_status_limit_*` |
 | `020` | `vhost_traffic_status_display_sum_key` |
 | `026` (partly) | `vhost_traffic_status_measure_status_codes`, histogram bucket configuration |
-| `028`, `040`, `041` | `resolve` and backup peer tracking |
+| `040`, `041` | backup peer tracking after a re-resolve |
 | `042` (partly) | `vhost_traffic_status_dump` |
 
 ### Genuinely about the output format
@@ -78,7 +80,23 @@ display. There is no equivalent surface here.
 the slab. The filter parts do not apply, but nothing here establishes what
 happens to a very long `server_name` or peer address.
 
-**`045.upstream_next_attempts.t`** — each attempt of a request that
-`proxy_next_upstream` passed on is counted against the peer it was passed on
-from, rather than only the peer that answered. This module's README claims that
-behaviour, so this one should be portable; it is the first to write next.
+**`029.control_upstream_addrs.t`**, **`038.control_resolve_peers.t`** — the
+control interface over resolved peers. No control interface here.
+
+## Two differences worth knowing
+
+Both came out of porting `028` and `045`, and neither is a defect so much as a
+consequence of how this module collects its numbers.
+
+**Peers appear only once they have served.** The original enumerates the
+servers of a group, so every configured peer has an entry from the start, with
+zeroes. This module writes a series when a peer first appears in
+`r->upstream_states`, so a peer that has never been chosen is absent rather
+than zero. After a re-resolve the new address shows up as soon as the balancer
+sends it anything, not the moment the group changes.
+
+**A peer that leaves the group is not marked.** The original sets `weight: 0`
+on a peer the group no longer holds, which distinguishes it from one that is
+merely idle. Here the series simply stays as it was. The numbers are kept
+either way - `009.upstream_resolve.t` asserts that - but nothing says the
+address is gone.
