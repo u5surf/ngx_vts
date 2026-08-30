@@ -23,6 +23,8 @@ use ngx::ffi::*;
 use ngx::sync::RwLock;
 use std::collections::HashMap;
 use std::os::raw::c_void;
+#[cfg(not(test))]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::cache_stats::{CacheZoneStats, VtsCacheStats};
@@ -359,6 +361,64 @@ pub fn is_configured() -> bool {
     !VTS_SHARED.load(Ordering::Acquire).is_null()
 }
 
+/// The zone's slab pool, published alongside `VTS_SHARED` so that the
+/// status handler can ask the slab how much room is left.  Null until a
+/// `vts_zone` is configured.
+#[cfg(not(test))]
+static VTS_SLAB: AtomicPtr<ngx_slab_pool_t> = AtomicPtr::new(std::ptr::null_mut());
+
+/// The size `vts_zone` was configured with, in bytes.
+#[cfg(not(test))]
+static VTS_ZONE_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+/// What the shared zone is holding.
+///
+/// `used_size` is deliberately absent. The original module sums the sizes of
+/// its nodes, which is not what the zone has spent: the slab hands out a whole
+/// page or a whole slot per node, so that figure can read well below the
+/// maximum while the zone is already refusing inserts. `free_size` is what
+/// actually answers "does another node fit", so that is what is reported.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShmInfo {
+    /// The configured size of the zone.
+    pub max_size: u64,
+    /// What the slab has left, as whole free pages.
+    pub free_size: u64,
+    /// Entries currently held across the server, upstream and cache maps.
+    pub used_node: u64,
+}
+
+/// Reads the zone's usage, or `None` when no `vts_zone` is configured.
+#[cfg(not(test))]
+pub fn shm_info() -> Option<ShmInfo> {
+    let slab = VTS_SLAB.load(Ordering::Acquire);
+    if slab.is_null() {
+        return None;
+    }
+
+    // SAFETY: published once during zone initialization, before workers fork,
+    // and valid for as long as the zone is mapped.
+    let pfree = unsafe { (*slab).pfree } as u64;
+    // SAFETY: nginx sets ngx_pagesize during startup and never changes it.
+    let pagesize = unsafe { ngx_pagesize } as u64;
+
+    let shared = shared()?;
+    let used_node = shared.servers.read().iter().count()
+        + shared.upstreams.read().iter().count()
+        + shared.caches.read().iter().count();
+
+    Some(ShmInfo {
+        max_size: VTS_ZONE_SIZE.load(Ordering::Acquire) as u64,
+        free_size: pfree * pagesize,
+        used_node: used_node as u64,
+    })
+}
+
+#[cfg(test)]
+pub fn shm_info() -> Option<ShmInfo> {
+    None
+}
+
 #[cfg(not(test))]
 fn shared() -> Option<&'static VtsShared> {
     let ptr = VTS_SHARED.load(Ordering::Acquire);
@@ -678,6 +738,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     if !existing.is_null() {
         shm_zone_ref.data = existing as *mut c_void;
         VTS_SHARED.store(existing, Ordering::Release);
+        publish_zone(shm_zone_ref, &alloc);
         return NGX_OK as ngx_int_t;
     }
 
@@ -708,8 +769,19 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     shm_zone_ref.data = shared_ptr as *mut c_void;
     alloc.as_mut().data = shared_ptr as *mut c_void;
     VTS_SHARED.store(shared_ptr, Ordering::Release);
+    publish_zone(shm_zone_ref, &alloc);
 
     NGX_OK as ngx_int_t
+}
+
+/// Publishes the slab pool and the configured zone size for `shm_info`.
+#[cfg(not(test))]
+fn publish_zone(shm_zone: &ngx_shm_zone_t, alloc: &SlabPool) {
+    VTS_SLAB.store(
+        alloc.as_ref() as *const ngx_slab_pool_t as *mut ngx_slab_pool_t,
+        Ordering::Release,
+    );
+    VTS_ZONE_SIZE.store(shm_zone.shm.size, Ordering::Release);
 }
 
 /// Test-only stub.  Tests never invoke this; provided so the symbol

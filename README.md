@@ -99,6 +99,12 @@ model without nginx.
 - **Cache size gauges** per cache zone — `proxy_cache_path max_size=…`
   and current on-disk usage (`sh->size × bsize`) exposed as
   `nginx_vts_cache_size_bytes{type="max"}` and `{type="used"}`.
+- **Shared zone accounting** — `nginx_vts_main_shm_usage_bytes{shared="max_size"}`
+  and `{shared="free_size"}` plus `nginx_vts_main_shm_usage_nodes`, so a full
+  zone can be told from an idle one. `free_size` comes from the slab's own
+  page count rather than the sum of node sizes, because the slab spends a
+  whole page or slot per node and the latter reads low right up to the point
+  where inserts start failing.
 - **Accurate connection counters** via the global `ngx_stat_*` atomics
   when nginx is built with `--with-http_stub_status_module`;
   `reading`/`writing`/`waiting` match what `stub_status` would

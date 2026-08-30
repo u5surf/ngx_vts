@@ -35,6 +35,7 @@ cpanm --notest Test::Nginx
 | `004.histogram_buckets.t` | `023.histogram_buckets.t` | `_bucket{le=…}`, `+Inf`, `_sum`, `_count`, and the `histogram` type declaration |
 | `005.cache_zones.t` | the cache half of `002.check_json_syntax.t` | MISS then HIT per cache zone, the full set of cache statuses, `max` and `used` size gauges, two zones counted apart |
 | `006.counter_accumulation.t` | the non-dump half of `042.dump.t` | counters keep running totals across requests rather than reporting the last one |
+| `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has left, and how many entries it holds |
 
 ## What is not ported, and why
 
@@ -68,15 +69,6 @@ Nothing to port rather than something left undone.
 ### Features this module is missing
 
 These read like display tests but are not, and are worth treating as gaps.
-
-**`033.shm_free_size.t`** — not a JSON test at all: its second block asserts a
-Prometheus series, `nginx_vts_main_shm_usage_bytes{shared="free_size"}`. Its
-header explains why the metric exists: `usedSize` is the sum of node sizes,
-which is not what the zone has spent, because the slab hands out a whole page
-or slot per node. A zone can refuse a node while `usedSize` still reads well
-below `maxSize`, and `freeSize` is the only thing that says whether there is
-room. This module exposes nothing about its shared zone, so an operator cannot
-tell a full zone from an idle one.
 
 **`043.variables.t`** — exposes the same counters a second way, as `$vts_*`
 request variables, and checks them through response headers rather than the

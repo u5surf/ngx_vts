@@ -21,6 +21,7 @@ use ngx::ffi::ngx_time;
 mod cache;
 mod connections;
 mod server;
+mod shm;
 mod upstream;
 
 /// Prometheus metrics formatter for VTS statistics.
@@ -120,6 +121,9 @@ pub fn generate_vts_status_content() -> String {
 
     content.push_str(&formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION")));
     content.push_str(&formatter.format_connection_stats(manager.get_connection_stats()));
+    if let Some(info) = crate::shm::shm_info() {
+        content.push_str(&formatter.format_shm_info(&info));
+    }
     content.push_str(&formatter.format_server_stats(&server_zone_stats));
 
     if !upstream_zones.is_empty() {
