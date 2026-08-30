@@ -1,0 +1,30 @@
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+
+  # The workflows already pin actions to commit SHAs, which stops a moved tag
+  # from changing what runs but also means nothing updates on its own.
+  # Dependabot rewrites the SHA and its trailing version comment together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
+  # Cargo.lock is not committed here, so Dependabot can only propose changes to
+  # the version requirements in Cargo.toml. That covers libc; the ngx git
+  # dependency needs a lockfile before it can be tracked.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
