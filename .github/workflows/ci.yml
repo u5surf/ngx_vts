@@ -227,13 +227,18 @@ jobs:
         sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev cpanminus
         sudo cpanm --notest Test::Nginx
 
-    - name: Fetch nginx
+    # nginx has to be configured twice. Building the module needs the headers
+    # and the generated ngx_auto_config.h, which only exist after configure has
+    # run; nginx in turn has to link against the module, which only exists after
+    # cargo has run. So: configure to lay down objs/, build the module, then
+    # configure again with --add-module and compile for real.
+    - name: Fetch and configure nginx
       run: |
         wget -q http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
         tar -xzf nginx-${NGINX_VERSION}.tar.gz
+        cd nginx-${NGINX_VERSION}
+        ./configure --with-compat
 
-    # The module is a cdylib that nginx links against, and building it needs
-    # nginx's headers, so the sources have to be on disk before cargo runs.
     - name: Build the module
       env:
         NGINX_SOURCE_DIR: ${{ github.workspace }}/nginx-1.30.1
