@@ -193,3 +193,65 @@ jobs:
           grep "warning:" doc-output.log
           echo "Continuing build despite warnings..."
         fi
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-integration-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-integration-
+
+    - name: Install system dependencies
+      run: |
+        # The runner image carries Microsoft apt repositories that intermittently
+        # answer 403, and apt-get update fails as a whole when any source does.
+        # None of them provide anything needed here.
+        sudo rm -f /etc/apt/sources.list.d/microsoft*.list \
+                   /etc/apt/sources.list.d/microsoft*.sources \
+                   /etc/apt/sources.list.d/azure-cli.list \
+                   /etc/apt/sources.list.d/azure-cli.sources
+        sudo apt-get update
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev cpanminus
+        sudo cpanm --notest Test::Nginx
+
+    - name: Fetch nginx
+      run: |
+        wget -q http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+        tar -xzf nginx-${NGINX_VERSION}.tar.gz
+
+    # The module is a cdylib that nginx links against, and building it needs
+    # nginx's headers, so the sources have to be on disk before cargo runs.
+    - name: Build the module
+      env:
+        NGINX_SOURCE_DIR: ${{ github.workspace }}/nginx-1.30.1
+      run: cargo build --release
+
+    # Now nginx can be configured against the module that was just built.
+    - name: Build nginx with the module
+      working-directory: nginx-1.30.1
+      run: |
+        ./configure \
+          --with-compat \
+          --with-debug \
+          --with-http_ssl_module \
+          --with-http_stub_status_module \
+          --add-module=${{ github.workspace }}
+        make -j"$(nproc)"
+
+    - name: Run the integration tests
+      env:
+        TEST_NGINX_BINARY: ${{ github.workspace }}/nginx-1.30.1/objs/nginx
+      run: prove t/
