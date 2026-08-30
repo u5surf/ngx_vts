@@ -38,6 +38,7 @@ cpanm --notest Test::Nginx
 | `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has left, and how many entries it holds |
 | `008.upstream_next_attempts.t` | `045.upstream_next_attempts.t` | a request that `proxy_next_upstream` passed on is counted against the peer it was passed on from, with that attempt's own status and no bytes |
 | `009.upstream_resolve.t` | `028.upstream_resolve.t` | peers resolved at run time are counted, and a peer replaced by a re-resolve keeps its numbers |
+| `010.upstream_backup_resolve.t` | `040.upstream_backup_resolve.t`, `041.upstream_backup_gone.t` | a backup peer the resolver made is counted against its address, and keeps its numbers when a re-resolve takes it out |
 
 ## What is not ported, and why
 
@@ -56,7 +57,6 @@ Nothing to port rather than something left undone.
 | `017`–`019` | `vhost_traffic_status_limit_*` |
 | `020` | `vhost_traffic_status_display_sum_key` |
 | `026` (partly) | `vhost_traffic_status_measure_status_codes`, histogram bucket configuration |
-| `040`, `041` | backup peer tracking after a re-resolve |
 | `042` (partly) | `vhost_traffic_status_dump` |
 
 ### Genuinely about the output format
@@ -94,6 +94,18 @@ zeroes. This module writes a series when a peer first appears in
 `r->upstream_states`, so a peer that has never been chosen is absent rather
 than zero. After a re-resolve the new address shows up as soon as the balancer
 sends it anything, not the moment the group changes.
+
+This is why `040.upstream_backup_resolve.t` ports only in part: its blocks that
+assert a peer is *named* before serving anything have no equivalent, and its
+TEST 6, which reads a wide name's peers out of the display with no request made
+at all, cannot pass here by construction.
+
+It also means the bugs those two files were written for cannot occur here. Both
+are failures of a reader that walks the upstream configuration - backup peers
+made by a resolving line sit in `peers->next`, which neither of the original's
+readers visited, and a group whose only resolving line is a backup was skipped
+because `peers->resolve` was NULL. Reading `r->upstream_states` never has to
+decide which list a peer came from.
 
 **A peer that leaves the group is not marked.** The original sets `weight: 0`
 on a peer the group no longer holds, which distinguishes it from one that is
