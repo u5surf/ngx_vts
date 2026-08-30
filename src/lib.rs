@@ -9,14 +9,24 @@ use std::os::raw::c_char;
 use std::sync::{Arc, RwLock};
 
 use crate::cache_stats::CacheStatsManager;
-use crate::prometheus::generate_vts_status_content;
 use crate::vts_node::VtsStatsManager;
 
 #[cfg(test)]
 static GLOBAL_VTS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// Only the tests reach for this now; the status handler in src/module.rs
+// calls it directly.
+#[cfg(test)]
+use crate::prometheus::generate_vts_status_content;
+
 mod cache_stats;
 mod connection_stats;
+// The module definition and its directives reference nginx symbols that only
+// exist inside the nginx binary, so a unit test harness built from this crate
+// cannot load them. The tests here cover the pure logic, which lives
+// elsewhere.
+#[cfg(not(test))]
+mod module;
 mod prometheus;
 mod shm;
 mod stats;
@@ -407,33 +417,6 @@ pub extern "C" fn vts_update_statistics() {
     // via vts_update_upstream_stats_ffi() calls from nginx upstream processing
 
     // Future: Could add periodic collection of other nginx internal statistics here
-}
-
-/// Get VTS status content for C integration
-/// Returns a pointer to a freshly generated status content string
-///
-/// # Safety
-///
-/// The returned pointer is valid until the next call to this function.
-/// The caller must not free the returned pointer.
-#[no_mangle]
-pub unsafe extern "C" fn ngx_http_vts_get_status() -> *const c_char {
-    use std::sync::Mutex;
-
-    static STATUS_CACHE: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
-
-    // Update cache with fresh content
-    if let Ok(mut cache) = STATUS_CACHE.lock() {
-        let status_content = generate_vts_status_content();
-        let c_string = std::ffi::CString::new(status_content)
-            .unwrap_or_else(|_| std::ffi::CString::new("Failed to generate VTS status").unwrap());
-        *cache = Some(c_string);
-        cache.as_ref().unwrap().as_ptr()
-    } else {
-        // Fallback if mutex is poisoned
-        static FALLBACK: &[u8] = b"VTS Status: Error\0";
-        FALLBACK.as_ptr() as *const c_char
-    }
 }
 
 /// External initialization function for nginx module integration
