@@ -17,13 +17,14 @@ updates:
     commit-message:
       prefix: "ci"
 
-  # Cargo.lock is not committed here, so Dependabot can only propose changes to
-  # the version requirements in Cargo.toml. That covers libc; the ngx git
-  # dependency needs a lockfile before it can be tracked.
+  # Cargo.lock is committed, so transitive dependencies and the ngx git
+  # dependency are both visible here.
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    allow:
+      - dependency-type: "all"
     groups:
       all-dependencies:
         patterns:
