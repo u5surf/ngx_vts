@@ -39,6 +39,7 @@ cpanm --notest Test::Nginx
 | `008.upstream_next_attempts.t` | `045.upstream_next_attempts.t` | a request that `proxy_next_upstream` passed on is counted against the peer it was passed on from, with that attempt's own status and no bytes |
 | `009.upstream_resolve.t` | `028.upstream_resolve.t` | peers resolved at run time are counted, and a peer replaced by a re-resolve keeps its numbers |
 | `010.upstream_backup_resolve.t` | `040.upstream_backup_resolve.t`, `041.upstream_backup_gone.t` | a backup peer the resolver made is counted against its address, and keeps its numbers when a re-resolve takes it out |
+| `011.long_names.t` | `037.upstream_long_peer_name.t` | a unix socket peer keeps its whole path; a server name that fits is the zone, and one that does not falls back to the default rather than losing the request |
 
 ## What is not ported, and why
 
@@ -56,7 +57,7 @@ Nothing to port rather than something left undone.
 | `015`, `016` | Lua bindings |
 | `017`–`019` | `vhost_traffic_status_limit_*` |
 | `020` | `vhost_traffic_status_display_sum_key` |
-| `026` (partly) | `vhost_traffic_status_measure_status_codes`, histogram bucket configuration |
+| `026` | every block is about a filter name; `vhost_traffic_status_filter_by_set_key` and `vhost_traffic_status_measure_status_codes` |
 | `042` (partly) | `vhost_traffic_status_dump` |
 
 ### Genuinely about the output format
@@ -75,10 +76,6 @@ These read like display tests but are not, and are worth treating as gaps.
 **`043.variables.t`** — exposes the same counters a second way, as `$vts_*`
 request variables, and checks them through response headers rather than the
 display. There is no equivalent surface here.
-
-**`026.long_names.t`**, **`037.upstream_long_peer_name.t`** — key lengths in
-the slab. The filter parts do not apply, but nothing here establishes what
-happens to a very long `server_name` or peer address.
 
 **`029.control_upstream_addrs.t`**, **`038.control_resolve_peers.t`** — the
 control interface over resolved peers. No control interface here.
@@ -112,3 +109,12 @@ on a peer the group no longer holds, which distinguishes it from one that is
 merely idle. Here the series simply stays as it was. The numbers are kept
 either way - `009.upstream_resolve.t` asserts that - but nothing says the
 address is gone.
+
+**Key lengths, for the record.** The wrapper copies names into 255-byte
+buffers. A peer address longer than that is skipped; in practice nothing
+reaches it, since `addr:port` and even a unix socket path at the platform's
+`sun_path` limit are far shorter, and `011.long_names.t` holds that. An
+oversized `server_name` is different: it is counted under the default zone
+rather than dropped, which `011` also holds. Losing the request outright would
+be worse - a counter that silently stops is harder to notice than one that
+reads high.
