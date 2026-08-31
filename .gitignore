@@ -45,3 +45,6 @@ nginx.conf.local
 /docs/
 nginx-1.28.0/
 nginx-1.28.0.tar.gz
+
+# test-nginx writes its server root here
+/t/servroot/
