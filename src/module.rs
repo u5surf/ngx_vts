@@ -173,7 +173,8 @@ http_request_handler!(
             return rc;
         }
 
-        let body = generate_vts_status_content();
+        let peer_states = crate::peers::collect(request);
+        let body = generate_vts_status_content(&peer_states);
 
         let Some(mut buf) = request.pool().create_buffer_from_str(&body) else {
             return http::HTTPStatus::INTERNAL_SERVER_ERROR.into();

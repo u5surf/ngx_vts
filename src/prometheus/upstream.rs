@@ -15,7 +15,11 @@ impl PrometheusFormatter {
     /// byte transfers, response times, status code class counts, and
     /// the response-duration histogram.
     #[allow(dead_code)] // Used in tests and VTS integration
-    pub fn format_upstream_stats(&self, upstream_zones: &HashMap<String, UpstreamZone>) -> String {
+    pub fn format_upstream_stats(
+        &self,
+        upstream_zones: &HashMap<String, UpstreamZone>,
+        peer_states: &HashMap<(String, String), crate::peers::PeerState>,
+    ) -> String {
         let mut output = String::new();
         if upstream_zones.is_empty() {
             return output;
@@ -82,17 +86,22 @@ impl PrometheusFormatter {
         output.push('\n');
 
         // nginx_vts_upstream_server_up
+        //
+        // Whether a peer is in rotation is a property of the group, not of
+        // anything a request did, so it comes from `peer_states` - a walk of
+        // `uscf->peer.data` - rather than from the counters. A peer the walk
+        // did not see gets no series: the counters can outlive the group, and
+        // saying nothing is better than saying "up" about an address that is
+        // no longer configured.
         output.push_str(&format!(
             "# HELP {prefix}upstream_server_up Upstream server status (1=up, 0=down)\n"
         ));
         output.push_str(&format!("# TYPE {prefix}upstream_server_up gauge\n"));
-        for (upstream_name, zone) in upstream_zones {
-            for (server_addr, stats) in &zone.servers {
-                let server_up = if stats.down { 0 } else { 1 };
-                output.push_str(&format!(
-                    "{prefix}upstream_server_up{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {server_up}\n"
-                ));
-            }
+        for ((upstream_name, server_addr), peer) in peer_states {
+            let server_up = if peer.down { 0 } else { 1 };
+            output.push_str(&format!(
+                "{prefix}upstream_server_up{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {server_up}\n"
+            ));
         }
         output.push('\n');
 
@@ -242,14 +251,33 @@ mod tests {
     fn empty_upstream_zones_render_to_empty_string() {
         let f = PrometheusFormatter::new();
         let empty: HashMap<String, UpstreamZone> = HashMap::new();
-        assert!(f.format_upstream_stats(&empty).is_empty());
+        assert!(f
+            .format_upstream_stats(&empty, &Default::default())
+            .is_empty());
     }
 
     #[test]
     fn upstream_stats_render_all_families() {
         let mut zones = HashMap::new();
         zones.insert("test_backend".to_string(), create_test_upstream_zone());
-        let out = PrometheusFormatter::new().format_upstream_stats(&zones);
+
+        // server_up comes from the group walk rather than the counters, so the
+        // test has to say what the group holds. The second peer is down.
+        let mut peer_states = HashMap::new();
+        for (addr, down) in [("10.0.0.1:80", false), ("10.0.0.2:80", true)] {
+            peer_states.insert(
+                ("test_backend".to_string(), addr.to_string()),
+                crate::peers::PeerState {
+                    down,
+                    backup: false,
+                    weight: 1,
+                    max_fails: 1,
+                    fails: if down { 1 } else { 0 },
+                },
+            );
+        }
+
+        let out = PrometheusFormatter::new().format_upstream_stats(&zones, &peer_states);
 
         // Counter / bytes / response_seconds / server_up.
         assert!(out.contains("# HELP nginx_vts_upstream_requests_total"));
@@ -282,7 +310,7 @@ mod tests {
         let f = PrometheusFormatter::with_prefix("custom_vts_");
         let mut zones = HashMap::new();
         zones.insert("test_backend".to_string(), create_test_upstream_zone());
-        let out = f.format_upstream_stats(&zones);
+        let out = f.format_upstream_stats(&zones, &Default::default());
         assert!(out.contains("# HELP custom_vts_upstream_requests_total"));
         assert!(out.contains("custom_vts_upstream_requests_total{upstream=\"test_backend\""));
         assert!(!out.contains("nginx_vts_"));

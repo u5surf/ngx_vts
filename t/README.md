@@ -40,6 +40,7 @@ cpanm --notest Test::Nginx
 | `009.upstream_resolve.t` | `028.upstream_resolve.t` | peers resolved at run time are counted, and a peer replaced by a re-resolve keeps its numbers |
 | `010.upstream_backup_resolve.t` | `040.upstream_backup_resolve.t`, `041.upstream_backup_gone.t` | a backup peer the resolver made is counted against its address, and keeps its numbers when a re-resolve takes it out |
 | `011.long_names.t` | `037.upstream_long_peer_name.t` | a unix socket peer keeps its whole path; a server name that fits is the zone, and one that does not falls back to the default rather than losing the request |
+| `012.upstream_server_up.t` | `024.upstream_check.t` (the `down` half) | a peer is reported down when the configuration says so or when it has reached `max_fails`, up otherwise, and `max_fails 0` does not read as down |
 
 ## What is not ported, and why
 
@@ -85,12 +86,20 @@ control interface over resolved peers. No control interface here.
 Both came out of porting `028` and `045`, and neither is a defect so much as a
 consequence of how this module collects its numbers.
 
-**Peers appear only once they have served.** The original enumerates the
+**Counters appear only once a peer has served.** The original enumerates the
 servers of a group, so every configured peer has an entry from the start, with
-zeroes. This module writes a series when a peer first appears in
-`r->upstream_states`, so a peer that has never been chosen is absent rather
-than zero. After a re-resolve the new address shows up as soon as the balancer
-sends it anything, not the moment the group changes.
+zeroes. The counters here are written when a peer first appears in
+`r->upstream_states`, so a peer that has never been chosen has no
+`nginx_vts_upstream_requests_total` rather than a zero one. After a re-resolve
+the new address gets counters as soon as the balancer sends it anything, not
+the moment the group changes.
+
+`nginx_vts_upstream_server_up` is the exception, and deliberately so: it comes
+from a walk of the group itself (`src/peers.rs`) rather than from the counters,
+because whether a peer is in rotation is not something a record of past
+requests can answer. So an idle peer does get a `server_up` series -
+`012.upstream_server_up.t` holds that - it just has no traffic counters beside
+it yet.
 
 This is why `040.upstream_backup_resolve.t` ports only in part: its blocks that
 assert a peer is *named* before serving anything have no equivalent, and its
@@ -106,9 +115,11 @@ decide which list a peer came from.
 
 **A peer that leaves the group is not marked.** The original sets `weight: 0`
 on a peer the group no longer holds, which distinguishes it from one that is
-merely idle. Here the series simply stays as it was. The numbers are kept
+merely idle. Here the counters simply stay as they were. The numbers are kept
 either way - `009.upstream_resolve.t` asserts that - but nothing says the
-address is gone.
+address is gone. The group walk does not close this either: a departed peer is
+no longer in the list, so it gets no `server_up` and its stale counters stand
+alone.
 
 **Key lengths, for the record.** The wrapper copies names into 255-byte
 buffers. A peer address longer than that is skipped; in practice nothing

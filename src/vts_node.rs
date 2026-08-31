@@ -223,7 +223,7 @@ mod tests {
         // Generate Prometheus metrics
         let formatter = PrometheusFormatter::new();
         let all_upstreams = manager.get_all_upstream_zones();
-        let prometheus_output = formatter.format_upstream_stats(all_upstreams);
+        let prometheus_output = formatter.format_upstream_stats(all_upstreams, &Default::default());
 
         // Verify Prometheus output contains expected metrics
         assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.10:80\"} 2"));
@@ -279,7 +279,7 @@ mod tests {
 
         // Generate and verify Prometheus output
         let formatter = PrometheusFormatter::new();
-        let prometheus_output = formatter.format_upstream_stats(all_upstreams);
+        let prometheus_output = formatter.format_upstream_stats(all_upstreams, &Default::default());
 
         // Count number of request total metrics
         let request_metrics_count = prometheus_output

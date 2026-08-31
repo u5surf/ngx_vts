@@ -27,6 +27,9 @@ mod connection_stats;
 // elsewhere.
 #[cfg(not(test))]
 mod module;
+// The PeerState type is plain data and is compiled everywhere; the walk that
+// fills it in needs nginx symbols and is gated inside the module.
+pub mod peers;
 mod prometheus;
 mod shm;
 mod stats;
@@ -508,7 +511,7 @@ mod integration_tests {
         );
 
         // Generate VTS status content
-        let status_content = generate_vts_status_content();
+        let status_content = generate_vts_status_content(&Default::default());
 
         // Verify basic structure
         assert!(status_content.contains("# nginx-vts-rust"));
@@ -580,7 +583,7 @@ mod integration_tests {
             200,
         );
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
 
         println!("=== ISSUE6 Complete Metrics Output ===");
         println!("{}", content);
@@ -632,7 +635,7 @@ mod integration_tests {
             *manager = VtsStatsManager::new();
         }
 
-        let initial_content = generate_vts_status_content();
+        let initial_content = generate_vts_status_content(&Default::default());
         let _initial_backend_requests = if initial_content.contains("test3-persistence_backend") {
             1
         } else {
@@ -668,10 +671,10 @@ mod integration_tests {
             200,
         );
 
-        let content1 = generate_vts_status_content();
+        let content1 = generate_vts_status_content(&Default::default());
         assert!(content1.contains("test3-persistence_backend"));
 
-        let content2 = generate_vts_status_content();
+        let content2 = generate_vts_status_content(&Default::default());
         // Verify metrics are present (no longer check summary format)
         assert!(content2.contains("nginx_vts_upstream_requests_total"));
 
@@ -703,7 +706,7 @@ mod integration_tests {
     fn test_empty_vts_stats() {
         // Test VTS status generation with empty stats
         // Note: This may not be truly empty if other tests have run first
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
 
         // Should still have basic structure
         assert!(content.contains("# nginx-vts-rust"));
@@ -757,15 +760,16 @@ mod integration_tests {
             );
         }
 
-        let s = generate_vts_status_content();
+        let s = generate_vts_status_content(&Default::default());
         assert!(s.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 500"
         ));
         assert!(s.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 375000"));
         assert!(s.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 750000"));
-        assert!(s.contains(
-            "nginx_vts_upstream_server_up{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
-        ));
+        // server_up is deliberately not asserted here. It is derived from a
+        // walk of the upstream group rather than from these counters, and this
+        // test has no group to walk; t/012.upstream_server_up.t covers it
+        // against a running nginx.
     }
 
     #[test]
@@ -775,7 +779,7 @@ mod integration_tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reset_manager();
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         // Pre-request render must NOT emit per-(upstream,server) request counters.
         assert!(!content.contains("nginx_vts_upstream_requests_total{"));
         // But the basic headers and module info are always present.
@@ -792,14 +796,14 @@ mod integration_tests {
         reset_manager();
 
         update_upstream_zone_stats("backend", "127.0.0.1:8080", 85, 42, 1024, 512, 200);
-        let after_one = generate_vts_status_content();
+        let after_one = generate_vts_status_content(&Default::default());
         assert!(after_one.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
         ));
         assert!(after_one.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 512"));
 
         update_upstream_zone_stats("backend", "127.0.0.1:8080", 92, 48, 1536, 768, 200);
-        let after_two = generate_vts_status_content();
+        let after_two = generate_vts_status_content(&Default::default());
         assert!(after_two.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 2"
         ));
@@ -831,7 +835,7 @@ mod integration_tests {
             );
         }
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         assert!(content.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
         ));
@@ -847,11 +851,11 @@ mod integration_tests {
         reset_manager();
 
         // Before init: no per-server series.
-        let before = generate_vts_status_content();
+        let before = generate_vts_status_content(&Default::default());
         assert!(before.contains("nginx_vts_upstream_zones_total 0"));
 
         initialize_upstream_zones_for_testing();
-        let after = generate_vts_status_content();
+        let after = generate_vts_status_content(&Default::default());
 
         // Should now render the configured backend with zero counters.
         assert!(after.contains(
@@ -859,9 +863,10 @@ mod integration_tests {
         ));
         assert!(after.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"in\"} 0"));
         assert!(after.contains("nginx_vts_upstream_bytes_total{upstream=\"backend\",server=\"127.0.0.1:8080\",direction=\"out\"} 0"));
-        assert!(after.contains(
-            "nginx_vts_upstream_server_up{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
-        ));
+        // server_up is deliberately not asserted here. It is derived from a
+        // walk of the upstream group rather than from these counters, and this
+        // test has no group to walk; t/012.upstream_server_up.t covers it
+        // against a running nginx.
         // All status-class buckets exist with 0.
         for class in ["1xx", "2xx", "3xx", "4xx", "5xx"] {
             let expected = format!(
@@ -880,7 +885,7 @@ mod integration_tests {
         reset_manager();
         initialize_upstream_zones_for_testing();
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         for header in [
             "# HELP nginx_vts_upstream_requests_total Total upstream requests",
             "# TYPE nginx_vts_upstream_requests_total counter",
@@ -902,7 +907,7 @@ mod integration_tests {
         initialize_upstream_zones_for_testing();
 
         // Step 1: fresh status → zero counters.
-        let first = generate_vts_status_content();
+        let first = generate_vts_status_content(&Default::default());
         assert!(first.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 0"
         ));
@@ -911,7 +916,7 @@ mod integration_tests {
         update_upstream_zone_stats("backend", "127.0.0.1:8080", 94, 30, 1370, 615, 200);
 
         // Step 3: counters reflect the request.
-        let third = generate_vts_status_content();
+        let third = generate_vts_status_content(&Default::default());
         assert!(third.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 1"
         ));
@@ -953,7 +958,7 @@ mod integration_tests {
             }
         }
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         assert!(content.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 3"
         ));
@@ -1004,7 +1009,7 @@ mod integration_tests {
             }
         }
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         assert!(content.contains(
             "nginx_vts_upstream_requests_total{upstream=\"backend\",server=\"127.0.0.1:8080\"} 10"
         ));
@@ -1120,7 +1125,7 @@ mod integration_tests {
         update_cache_stats("test_cache", "MISS");
         update_cache_size("test_cache", 1_048_576, 524_288);
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         assert!(content.contains("# HELP nginx_vts_cache_requests_total"));
         assert!(content.contains("# TYPE nginx_vts_cache_requests_total counter"));
         assert!(content
@@ -1146,7 +1151,7 @@ mod integration_tests {
         CACHE_MANAGER.clear();
         reset_manager();
 
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         // Headers always emitted, even with no recorded cache zones.
         assert!(content.contains("# HELP nginx_vts_cache_requests_total"));
         assert!(content.contains("# TYPE nginx_vts_cache_requests_total counter"));
@@ -1225,7 +1230,7 @@ mod tests {
     #[test]
     fn test_generate_vts_status_content() {
         use crate::prometheus::generate_vts_status_content;
-        let content = generate_vts_status_content();
+        let content = generate_vts_status_content(&Default::default());
         assert!(content.contains("nginx-vts-rust"));
         assert!(content.contains(&format!("Version: {}", env!("CARGO_PKG_VERSION"))));
         assert!(content.contains("# VTS Status: Active"));

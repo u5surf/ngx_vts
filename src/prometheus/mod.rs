@@ -78,7 +78,9 @@ impl Default for PrometheusFormatter {
 ///
 /// Creates a comprehensive status report including server
 /// information, connection statistics, and request metrics.
-pub fn generate_vts_status_content() -> String {
+pub fn generate_vts_status_content(
+    peer_states: &std::collections::HashMap<(String, String), crate::peers::PeerState>,
+) -> String {
     // Collect current nginx connection statistics only in production
     #[cfg(not(test))]
     crate::vts_collect_nginx_connections();
@@ -127,7 +129,7 @@ pub fn generate_vts_status_content() -> String {
     content.push_str(&formatter.format_server_stats(&server_zone_stats));
 
     if !upstream_zones.is_empty() {
-        content.push_str(&formatter.format_upstream_stats(upstream_zones));
+        content.push_str(&formatter.format_upstream_stats(upstream_zones, peer_states));
     } else {
         // Placeholder for when no upstream zones exist.
         content.push_str(
