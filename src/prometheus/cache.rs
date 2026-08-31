@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::PrometheusFormatter;
+use super::{label, PrometheusFormatter};
 use crate::cache_stats::CacheZoneStats;
 
 impl PrometheusFormatter {
@@ -29,7 +29,7 @@ impl PrometheusFormatter {
         );
         output.push_str("# TYPE nginx_vts_cache_requests_total counter\n");
         for zone_stats in cache_zones.values() {
-            let zone = &zone_stats.name;
+            let zone = label::escape(&zone_stats.name);
             for (status, value) in [
                 ("hit", zone_stats.cache.hit),
                 ("miss", zone_stats.cache.miss),
@@ -51,7 +51,7 @@ impl PrometheusFormatter {
         output.push_str("# HELP nginx_vts_cache_size_bytes Cache size statistics in bytes\n");
         output.push_str("# TYPE nginx_vts_cache_size_bytes gauge\n");
         for zone_stats in cache_zones.values() {
-            let zone = &zone_stats.name;
+            let zone = label::escape(&zone_stats.name);
             output.push_str(&format!(
                 "{prefix}cache_size_bytes{{zone=\"{zone}\",type=\"max\"}} {}\n",
                 zone_stats.size.max_size
@@ -67,7 +67,7 @@ impl PrometheusFormatter {
         output.push_str("# HELP nginx_vts_cache_hit_ratio Cache hit ratio percentage\n");
         output.push_str("# TYPE nginx_vts_cache_hit_ratio gauge\n");
         for zone_stats in cache_zones.values() {
-            let zone = &zone_stats.name;
+            let zone = label::escape(&zone_stats.name);
             let hit_ratio = zone_stats.cache.hit_ratio();
             output.push_str(&format!(
                 "{prefix}cache_hit_ratio{{zone=\"{zone}\"}} {hit_ratio:.2}\n"

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::PrometheusFormatter;
+use super::{label, PrometheusFormatter};
 use crate::stats::VtsServerStats;
 
 impl PrometheusFormatter {
@@ -17,6 +17,7 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}server_requests_total counter\n"));
         for (zone, stats) in server_stats {
+            let zone = label::escape(zone);
             output.push_str(&format!(
                 "{prefix}server_requests_total{{zone=\"{zone}\"}} {}\n",
                 stats.requests
@@ -30,6 +31,7 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}server_bytes_total counter\n"));
         for (zone, stats) in server_stats {
+            let zone = label::escape(zone);
             output.push_str(&format!(
                 "{prefix}server_bytes_total{{zone=\"{zone}\",direction=\"in\"}} {}\n",
                 stats.bytes_in
@@ -47,6 +49,7 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}server_responses_total counter\n"));
         for (zone, stats) in server_stats {
+            let zone = label::escape(zone);
             for (class, value) in [
                 ("1xx", stats.responses.status_1xx),
                 ("2xx", stats.responses.status_2xx),
@@ -67,6 +70,7 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}server_request_seconds gauge\n"));
         for (zone, stats) in server_stats {
+            let zone = label::escape(zone);
             for (kind, value) in [
                 ("avg", stats.request_times.avg),
                 ("min", stats.request_times.min),
@@ -130,5 +134,23 @@ mod tests {
         assert!(out.contains(
             "nginx_vts_server_request_seconds{zone=\"example.test\",type=\"min\"} 0.005000"
         ));
+    }
+
+    #[test]
+    fn a_zone_name_with_a_quote_is_escaped_in_every_family() {
+        // `server_name 'a"b';` is a legal configuration line, and one such
+        // name unescaped makes the whole response unparseable - not just its
+        // own line.
+        let mut zones: HashMap<String, VtsServerStats> = HashMap::new();
+        zones.insert("a\"b".into(), VtsServerStats::default());
+
+        let out = PrometheusFormatter::new().format_server_stats(&zones);
+
+        for line in out.lines().filter(|l| l.starts_with("nginx_vts_server_")) {
+            assert!(
+                line.contains("zone=\"a\\\"b\""),
+                "unescaped zone in: {line}"
+            );
+        }
     }
 }

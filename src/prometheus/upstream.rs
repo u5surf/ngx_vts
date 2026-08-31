@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::PrometheusFormatter;
+use super::{label, PrometheusFormatter};
 use crate::upstream_stats::{UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
 
 impl PrometheusFormatter {
@@ -32,7 +32,9 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}upstream_requests_total counter\n"));
         for (upstream_name, zone) in upstream_zones {
+            let upstream_name = label::escape(upstream_name);
             for (server_addr, stats) in &zone.servers {
+                let server_addr = label::escape(server_addr);
                 output.push_str(&format!(
                     "{prefix}upstream_requests_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {}\n",
                     stats.request_counter
@@ -47,7 +49,9 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}upstream_bytes_total counter\n"));
         for (upstream_name, zone) in upstream_zones {
+            let upstream_name = label::escape(upstream_name);
             for (server_addr, stats) in &zone.servers {
+                let server_addr = label::escape(server_addr);
                 output.push_str(&format!(
                     "{prefix}upstream_bytes_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\",direction=\"in\"}} {}\n",
                     stats.in_bytes
@@ -66,7 +70,9 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}upstream_response_seconds gauge\n"));
         for (upstream_name, zone) in upstream_zones {
+            let upstream_name = label::escape(upstream_name);
             for (server_addr, stats) in &zone.servers {
+                let server_addr = label::escape(server_addr);
                 let avg_request_time = stats.avg_request_time() / 1000.0;
                 let avg_response_time = stats.avg_response_time() / 1000.0;
                 let total_request_time = stats.request_time_total as f64 / 1000.0;
@@ -98,6 +104,8 @@ impl PrometheusFormatter {
         ));
         output.push_str(&format!("# TYPE {prefix}upstream_server_up gauge\n"));
         for ((upstream_name, server_addr), peer) in peer_states {
+            let upstream_name = label::escape(upstream_name);
+            let server_addr = label::escape(server_addr);
             let server_up = if peer.down { 0 } else { 1 };
             output.push_str(&format!(
                 "{prefix}upstream_server_up{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {server_up}\n"
@@ -127,7 +135,9 @@ impl PrometheusFormatter {
             "# TYPE {prefix}upstream_responses_total counter\n"
         ));
         for (upstream_name, zone) in upstream_zones {
+            let upstream_name = label::escape(upstream_name);
             for (server_addr, stats) in &zone.servers {
+                let server_addr = label::escape(server_addr);
                 for (class, value) in [
                     ("1xx", stats.responses.status_1xx),
                     ("2xx", stats.responses.status_2xx),
@@ -162,7 +172,9 @@ impl PrometheusFormatter {
         ));
 
         for (upstream_name, zone) in upstream_zones {
+            let upstream_name = label::escape(upstream_name);
             for (server_addr, stats) in &zone.servers {
+                let server_addr = label::escape(server_addr);
                 for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
                     let bound_s = bound_ms as f64 / 1000.0;
                     output.push_str(&format!(
@@ -314,5 +326,51 @@ mod tests {
         assert!(out.contains("# HELP custom_vts_upstream_requests_total"));
         assert!(out.contains("custom_vts_upstream_requests_total{upstream=\"test_backend\""));
         assert!(!out.contains("nginx_vts_"));
+    }
+
+    #[test]
+    fn a_peer_address_with_a_quote_is_escaped_everywhere_it_appears() {
+        // A unix socket path is a peer address, and a path may contain a
+        // quote or a backslash. Both the counters and server_up carry it.
+        let mut zone = create_test_upstream_zone();
+        let stats = zone.servers.values().next().unwrap().clone();
+        zone.servers.clear();
+        zone.servers
+            .insert("unix:/tmp/a\"b.sock".to_string(), stats);
+
+        let mut zones = HashMap::new();
+        zones.insert("back\\end".to_string(), zone);
+
+        let mut peer_states = HashMap::new();
+        peer_states.insert(
+            ("back\\end".to_string(), "unix:/tmp/a\"b.sock".to_string()),
+            crate::peers::PeerState {
+                down: false,
+                backup: false,
+                weight: 1,
+                max_fails: 1,
+                fails: 0,
+            },
+        );
+
+        let out = PrometheusFormatter::new().format_upstream_stats(&zones, &peer_states);
+
+        let series: Vec<&str> = out
+            .lines()
+            .filter(|l| l.starts_with("nginx_vts_upstream_"))
+            .collect();
+        assert!(!series.is_empty());
+        for line in series {
+            assert!(line.contains(r#"upstream="back\\end""#), "upstream: {line}");
+            assert!(
+                line.contains(r#"server="unix:/tmp/a\"b.sock""#),
+                "server: {line}"
+            );
+        }
+        // And server_up, which comes from the group walk rather than the
+        // counters, went through the same escaping.
+        assert!(out.contains(
+            r#"nginx_vts_upstream_server_up{upstream="back\\end",server="unix:/tmp/a\"b.sock"} 1"#
+        ));
     }
 }

@@ -20,6 +20,7 @@ use ngx::ffi::ngx_time;
 
 mod cache;
 mod connections;
+mod label;
 mod server;
 mod shm;
 mod upstream;
@@ -62,7 +63,9 @@ impl PrometheusFormatter {
         output.push_str(&format!("# TYPE {}info gauge\n", self.metric_prefix));
         output.push_str(&format!(
             "{}info{{hostname=\"{}\",version=\"{}\"}} 1\n\n",
-            self.metric_prefix, hostname, version
+            self.metric_prefix,
+            label::escape(hostname),
+            label::escape(version)
         ));
         output
     }
