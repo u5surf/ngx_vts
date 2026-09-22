@@ -4,6 +4,10 @@
 //! This module provides comprehensive statistics collection for Nginx virtual hosts
 //! with Prometheus metrics output.
 
+// Everything this pulls in is nginx-side: the clock, the cycle, and the
+// types `init_module` is written in.  None of it is reachable from the
+// unit-test binary.
+#[cfg(not(test))]
 use ngx::ffi::*;
 use std::sync::{Arc, RwLock};
 
@@ -368,9 +372,7 @@ pub(crate) fn init_module(cf: &mut ngx_conf_t) -> ngx_int_t {
         return NGX_ERROR as ngx_int_t;
     }
 
-    // SAFETY: `cf` is the live configuration nginx handed to
-    // `postconfiguration`.
-    if unsafe { initialize_upstream_zones_from_config(cf) }.is_err() {
+    if initialize_upstream_zones_from_config().is_err() {
         return NGX_ERROR as ngx_int_t;
     }
 
@@ -1075,16 +1077,14 @@ mod integration_tests {
 /// Public function to initialize upstream zones for testing
 /// This simulates the nginx configuration parsing for ISSUE3.md
 pub fn initialize_upstream_zones_for_testing() {
-    unsafe {
-        if let Err(e) = initialize_upstream_zones_from_config(std::ptr::null_mut()) {
-            eprintln!("Failed to initialize upstream zones: {}", e);
-        }
+    if let Err(e) = initialize_upstream_zones_from_config() {
+        eprintln!("Failed to initialize upstream zones: {}", e);
     }
 }
 
-/// Initialize upstream zones from nginx configuration  
+/// Initialize upstream zones from nginx configuration
 /// Parses nginx.conf upstream blocks and creates zero-value statistics
-unsafe fn initialize_upstream_zones_from_config(_cf: *mut ngx_conf_t) -> Result<(), &'static str> {
+fn initialize_upstream_zones_from_config() -> Result<(), &'static str> {
     {
         let mut manager = match VTS_MANAGER.write() {
             Ok(guard) => guard,
