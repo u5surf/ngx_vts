@@ -11,9 +11,10 @@
 //! `Mutex` for the C code to read. Generating the body on the Rust side of the
 //! handler makes that unnecessary.
 //!
-//! What is left in C is `src/ngx_vts_wrapper.c`: the log-phase handler, which
-//! reads `r->upstream_states` and the cache fields that ngx-rust has no
-//! accessors for. See `docs/ngx-rust-gaps.md`.
+//! The log-phase handler that feeds the counters lives in
+//! `src/log_handler.rs`; it reads `r->upstream_states` and the cache fields
+//! off the raw request struct, which leaves the addon with no C sources at
+//! all.
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
@@ -33,9 +34,7 @@ use ngx::{http_request_handler, ngx_conf_log_error, ngx_string};
 
 use crate::prometheus::generate_vts_status_content;
 
-// The log-phase handler and its registration are still in C.
 unsafe extern "C" {
-    fn ngx_http_vts_init_wrapper(cf: *mut ngx_conf_t) -> ngx_int_t;
     fn vts_init_shm_zone(shm_zone: *mut ngx::ffi::ngx_shm_zone_t, data: *mut c_void) -> ngx_int_t;
 }
 
@@ -89,13 +88,13 @@ impl HttpModule for Module {
         unsafe { &*ptr::addr_of!(ngx_http_vts_module) }
     }
 
-    /// Hands over to the C wrapper, which registers the log-phase handler.
-    ///
-    /// `add_phase_handler::<H>()` would do this from Rust, but the handler it
-    /// would register is the one still written in C.
+    /// Registers the log-phase handler and seeds the upstream zones.
     unsafe extern "C" fn postconfiguration(cf: *mut ngx_conf_t) -> ngx_int_t {
         // SAFETY: nginx passes a valid `cf` to postconfiguration.
-        unsafe { ngx_http_vts_init_wrapper(cf) }
+        match unsafe { cf.as_mut() } {
+            Some(cf) => crate::init_module(cf),
+            None => Status::NGX_ERROR.into(),
+        }
     }
 }
 
@@ -141,8 +140,8 @@ static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
 
 /// The module itself.
 ///
-/// `src/ngx_vts_wrapper.c` still declares this `extern`, and nginx's generated
-/// `ngx_modules.c` looks it up by name, so the mangling has to be off.
+/// nginx's generated `ngx_modules.c` looks this up by name, so the mangling
+/// has to be off.
 #[used]
 #[allow(non_upper_case_globals)]
 #[unsafe(no_mangle)]

@@ -5,7 +5,6 @@
 //! with Prometheus metrics output.
 
 use ngx::ffi::*;
-use std::os::raw::c_char;
 use std::sync::{Arc, RwLock};
 
 use crate::cache_stats::CacheStatsManager;
@@ -21,6 +20,10 @@ use crate::prometheus::generate_vts_status_content;
 
 mod cache_stats;
 mod connection_stats;
+// The log-phase handler reads nginx symbols that only exist inside the nginx
+// binary, same as the module definition below.
+#[cfg(not(test))]
+mod log_handler;
 // The module definition and its directives reference nginx symbols that only
 // exist inside the nginx binary, so a unit test harness built from this crate
 // cannot load them. The tests here cover the pure logic, which lives
@@ -62,25 +65,15 @@ fn calculate_time_diff_ms(
     }
 }
 
-/// Calculate elapsed milliseconds since the request started.
-/// Production reads `ngx_timeofday()`; tests return `0` because no
-/// real clock is available in the unit-test binary (and the elapsed
-/// time isn't what the tests are asserting on anyway — see
-/// `calculate_time_diff_ms` tests for the arithmetic).
+/// Calculate elapsed milliseconds since the request started, reading
+/// nginx's cached clock.  Only the LOG_PHASE handler calls this, so it
+/// doesn't exist in the unit-test binary (where `ngx_timeofday()`
+/// isn't linked); the arithmetic itself is covered by the
+/// `calculate_time_diff_ms` tests.
+#[cfg(not(test))]
 fn calculate_request_time(start_sec: u64, start_msec: u64) -> u64 {
-    #[cfg(not(test))]
-    {
-        let tp = ngx_timeofday();
-        let current_sec = tp.sec as u64;
-        let current_msec = tp.msec as u64;
-        calculate_time_diff_ms(start_sec, start_msec, current_sec, current_msec)
-    }
-
-    #[cfg(test)]
-    {
-        let _ = (start_sec, start_msec);
-        0
-    }
+    let tp = ngx_timeofday();
+    calculate_time_diff_ms(start_sec, start_msec, tp.sec as u64, tp.msec as u64)
 }
 
 /// Global VTS statistics manager
@@ -147,48 +140,26 @@ pub fn update_connection_stats(
     manager.update_connection_stats(active, reading, writing, waiting, accepted, handled);
 }
 
-/// External API for tracking upstream requests dynamically
-/// This function can be called from external systems or nginx modules
-/// to track real-time upstream statistics
+/// Record one upstream attempt observed in the LOG_PHASE.
 ///
-/// # Safety
-///
-/// This function is unsafe because it dereferences raw C string pointers.
-/// The caller must ensure that:
-/// - `upstream_name` and `server_addr` are valid, non-null C string pointers
-/// - The strings pointed to by these pointers live for the duration of the call
-/// - The strings are properly null-terminated
-#[no_mangle]
-pub unsafe extern "C" fn vts_track_upstream_request(
-    upstream_name: *const c_char,
-    server_addr: *const c_char,
-    start_sec: u64,
-    start_msec: u64,
+/// `request_time` is the whole request's elapsed time (see
+/// [`calculate_request_time`]); the caller computes it once and shares
+/// it across every attempt of the same request.
+pub fn track_upstream_request(
+    upstream_name: &str,
+    server_addr: &str,
+    request_time: u64,
     upstream_response_time: u64,
     bytes_sent: u64,
     bytes_received: u64,
     status_code: u16,
 ) {
-    if upstream_name.is_null() || server_addr.is_null() {
-        return;
-    }
-
-    let upstream_name_str = std::ffi::CStr::from_ptr(upstream_name)
-        .to_str()
-        .unwrap_or("unknown");
-    let server_addr_str = std::ffi::CStr::from_ptr(server_addr)
-        .to_str()
-        .unwrap_or("unknown:0");
-
-    // Calculate request time using nginx-module-vts compatible method
-    let request_time = calculate_request_time(start_sec, start_msec);
-
     // Prefer the cross-worker shared table when `vts_zone` is configured;
     // fall back to the process-local manager otherwise (also the path
     // exercised by unit tests).
     if crate::shm::record_upstream(
-        upstream_name_str,
-        server_addr_str,
+        upstream_name,
+        server_addr,
         request_time,
         upstream_response_time,
         bytes_sent,
@@ -199,8 +170,8 @@ pub unsafe extern "C" fn vts_track_upstream_request(
     }
 
     update_upstream_zone_stats(
-        upstream_name_str,
-        server_addr_str,
+        upstream_name,
+        server_addr,
         request_time,
         upstream_response_time,
         bytes_sent,
@@ -236,43 +207,24 @@ fn cache_status_str(status: u8) -> Option<&'static str> {
     }
 }
 
-/// LOG_PHASE entry point invoked by the C wrapper for each request that
-/// touched a cache.  `cache_status` is the raw `ngx_uint_t` from
-/// `r->upstream->cache_status`; 0 (no cache) is filtered on the C side.
+/// Record a cache observation for a request that touched a cache.
+/// `cache_status` is the raw `r->upstream->cache_status`; unknown
+/// values (0 included, meaning "no cache consulted") are dropped.
 /// `max_size` / `used_size` are the current file cache settings (in
 /// bytes) and are overwritten on every call.
-///
-/// # Safety
-///
-/// The `zone_name` pointer must be a valid null-terminated C string.
-/// The caller must ensure the pointer remains valid for the duration of
-/// this call.
-#[no_mangle]
-pub unsafe extern "C" fn vts_update_cache_stats_ffi(
-    zone_name: *const c_char,
-    cache_status: u8,
-    max_size: u64,
-    used_size: u64,
-) {
-    if zone_name.is_null() {
-        return;
-    }
+pub fn track_cache_status(zone_name: &str, cache_status: u8, max_size: u64, used_size: u64) {
     let Some(status_str) = cache_status_str(cache_status) else {
         return;
     };
-    let zone_str = match std::ffi::CStr::from_ptr(zone_name).to_str() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
 
-    // Same dispatch pattern as `vts_update_server_stats_ffi`: shared
-    // memory wins when configured, otherwise fall back to the
-    // process-local manager (the path exercised by unit tests).
-    if crate::shm::record_cache(zone_str, cache_status, max_size, used_size) {
+    // Same dispatch pattern as `track_server_request`: shared memory
+    // wins when configured, otherwise fall back to the process-local
+    // manager (the path exercised by unit tests).
+    if crate::shm::record_cache(zone_name, cache_status, max_size, used_size) {
         return;
     }
-    CACHE_MANAGER.update_cache_stats(zone_str, status_str);
-    CACHE_MANAGER.update_cache_size(zone_str, max_size, used_size);
+    CACHE_MANAGER.update_cache_stats(zone_name, status_str);
+    CACHE_MANAGER.update_cache_size(zone_name, max_size, used_size);
 }
 
 /// Update cache size information for a specific zone
@@ -372,37 +324,22 @@ pub extern "C" fn vts_collect_nginx_connections() {
     }
 }
 
-/// Update server zone statistics from nginx request processing
-/// This should be called from nginx log phase for each request
-///
-/// # Safety
-///
-/// The `server_name` pointer must be a valid null-terminated C string.
-/// The caller must ensure the pointer remains valid for the duration of this call.
-#[no_mangle]
-pub unsafe extern "C" fn vts_update_server_stats_ffi(
-    server_name: *const c_char,
+/// Record one request against its server zone.  Called from the
+/// LOG_PHASE handler for every main request.
+pub fn track_server_request(
+    server_name: &str,
     status: u16,
     bytes_in: u64,
     bytes_out: u64,
     request_time: u64,
 ) {
-    if server_name.is_null() {
-        return;
-    }
-
-    let server_name_str = match std::ffi::CStr::from_ptr(server_name).to_str() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    // Same dispatch as `vts_track_upstream_request`: shared memory wins
+    // Same dispatch as `track_upstream_request`: shared memory wins
     // when configured, otherwise the process-local manager is used.
-    if crate::shm::record_server(server_name_str, status, bytes_in, bytes_out, request_time) {
+    if crate::shm::record_server(server_name, status, bytes_in, bytes_out, request_time) {
         return;
     }
 
-    update_server_zone_stats(server_name_str, status, bytes_in, bytes_out, request_time);
+    update_server_zone_stats(server_name, status, bytes_in, bytes_out, request_time);
 }
 
 /// Update VTS statistics from nginx (to be called periodically)
@@ -414,25 +351,26 @@ pub extern "C" fn vts_update_statistics() {
     vts_collect_nginx_connections();
 
     // Note: Server zone statistics are updated automatically when requests are processed
-    // via vts_update_server_stats_ffi() calls from nginx request processing
+    // via track_server_request() calls from the LOG_PHASE handler
 
     // Note: Upstream statistics are updated automatically when upstream requests complete
-    // via vts_update_upstream_stats_ffi() calls from nginx upstream processing
+    // via track_upstream_request() calls from the LOG_PHASE handler
 
     // Future: Could add periodic collection of other nginx internal statistics here
 }
 
-/// External initialization function for nginx module integration
-/// This function is called from the C wrapper during module initialization
-///
-/// # Safety
-///
-/// This function is safe to call from C code as it handles the null pointer case
-/// and doesn't dereference the configuration pointer directly.
-#[no_mangle]
-pub unsafe extern "C" fn ngx_http_vts_init_rust_module(_cf: *mut ngx_conf_t) -> ngx_int_t {
-    // Initialize upstream zones
-    if initialize_upstream_zones_from_config(_cf).is_err() {
+/// Module initialization, called from `module.rs`'s `postconfiguration`.
+/// Registers the LOG_PHASE handler that feeds every request into the
+/// stats tables, then seeds the upstream zones.
+#[cfg(not(test))]
+pub(crate) fn init_module(cf: &mut ngx_conf_t) -> ngx_int_t {
+    if !log_handler::register(cf) {
+        return NGX_ERROR as ngx_int_t;
+    }
+
+    // SAFETY: `cf` is the live configuration nginx handed to
+    // `postconfiguration`.
+    if unsafe { initialize_upstream_zones_from_config(cf) }.is_err() {
         return NGX_ERROR as ngx_int_t;
     }
 
@@ -813,27 +751,13 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_vts_track_upstream_request_ffi_records_into_state() {
+    fn test_track_upstream_request_records_into_state() {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reset_manager();
 
-        let upstream_name = std::ffi::CString::new("backend").unwrap();
-        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
-
-        unsafe {
-            vts_track_upstream_request(
-                upstream_name.as_ptr(),
-                server_addr.as_ptr(),
-                1000,
-                500,
-                38,
-                2048,
-                1024,
-                200,
-            );
-        }
+        track_upstream_request("backend", "127.0.0.1:8080", 0, 38, 2048, 1024, 200);
 
         let content = generate_vts_status_content(&Default::default());
         assert!(content.contains(
@@ -927,35 +851,29 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_log_phase_ffi_accumulates_across_calls() {
+    fn test_log_phase_accumulates_across_calls() {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reset_manager();
         initialize_upstream_zones_for_testing();
 
-        let upstream_name = std::ffi::CString::new("backend").unwrap();
-        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
-
         // Three sequential LOG_PHASE-style calls with mixed statuses.
-        let calls: &[(u64, u64, u64, u64, u16)] = &[
-            (500, 42, 1024, 512, 200),
-            (600, 55, 2048, 1024, 200),
-            (700, 48, 1536, 768, 404),
+        let calls: &[(u64, u64, u64, u16)] = &[
+            (42, 1024, 512, 200),
+            (55, 2048, 1024, 200),
+            (48, 1536, 768, 404),
         ];
-        for &(start_msec, response_ms, bytes_sent, bytes_received, status) in calls {
-            unsafe {
-                vts_track_upstream_request(
-                    upstream_name.as_ptr(),
-                    server_addr.as_ptr(),
-                    1000,
-                    start_msec,
-                    response_ms,
-                    bytes_sent,
-                    bytes_received,
-                    status,
-                );
-            }
+        for &(response_ms, bytes_sent, bytes_received, status) in calls {
+            track_upstream_request(
+                "backend",
+                "127.0.0.1:8080",
+                0,
+                response_ms,
+                bytes_sent,
+                bytes_received,
+                status,
+            );
         }
 
         let content = generate_vts_status_content(&Default::default());
@@ -971,42 +889,36 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_log_phase_ffi_categorises_diverse_status_codes() {
+    fn test_log_phase_categorises_diverse_status_codes() {
         let _lock = GLOBAL_VTS_TEST_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         reset_manager();
         initialize_upstream_zones_for_testing();
 
-        let upstream_name = std::ffi::CString::new("backend").unwrap();
-        let server_addr = std::ffi::CString::new("127.0.0.1:8080").unwrap();
-
         // 2 baseline 200s with extreme timings, then 8 mixed statuses.
-        let scenarios: &[(u64, u64, u64, u64, u16)] = &[
-            (0, 100, 50, 1, 200),                 // sub-ms upstream
-            (1800, 1_048_576, 2_097_152, 1, 200), // ~1.8s upstream, MBs
-            (25, 200, 100, 1, 301),
-            (25, 200, 100, 1, 302),
-            (25, 200, 100, 1, 400),
-            (25, 200, 100, 1, 401),
-            (25, 200, 100, 1, 403),
-            (25, 200, 100, 1, 500),
-            (25, 200, 100, 1, 502),
-            (25, 200, 100, 1, 503),
+        let scenarios: &[(u64, u64, u64, u16)] = &[
+            (0, 100, 50, 200),                 // sub-ms upstream
+            (1800, 1_048_576, 2_097_152, 200), // ~1.8s upstream, MBs
+            (25, 200, 100, 301),
+            (25, 200, 100, 302),
+            (25, 200, 100, 400),
+            (25, 200, 100, 401),
+            (25, 200, 100, 403),
+            (25, 200, 100, 500),
+            (25, 200, 100, 502),
+            (25, 200, 100, 503),
         ];
-        for &(response_ms, bytes_sent, bytes_received, start_msec, status) in scenarios {
-            unsafe {
-                vts_track_upstream_request(
-                    upstream_name.as_ptr(),
-                    server_addr.as_ptr(),
-                    1000,
-                    start_msec,
-                    response_ms,
-                    bytes_sent,
-                    bytes_received,
-                    status,
-                );
-            }
+        for &(response_ms, bytes_sent, bytes_received, status) in scenarios {
+            track_upstream_request(
+                "backend",
+                "127.0.0.1:8080",
+                0,
+                response_ms,
+                bytes_sent,
+                bytes_received,
+                status,
+            );
         }
 
         let content = generate_vts_status_content(&Default::default());

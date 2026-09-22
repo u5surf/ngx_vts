@@ -193,6 +193,7 @@ name = "ngx_vts_rust"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nginx-sys",
  "ngx",
 ]
 
