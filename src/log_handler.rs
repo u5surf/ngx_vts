@@ -35,9 +35,9 @@ const DEFAULT_SERVER_ZONE: &str = "_";
 ///
 /// # Safety
 ///
-/// `s` must point at a valid `ngx_str_t` whose `data`/`len` describe
-/// memory that outlives `'a`.
-unsafe fn as_key<'a>(s: &ngx_str_t) -> Option<&'a str> {
+/// `s` must be a valid `ngx_str_t` whose `data`/`len` describe memory
+/// that stays valid and unchanged for as long as `s` is borrowed.
+unsafe fn as_key(s: &ngx_str_t) -> Option<&str> {
     if s.len == 0 || s.len > VTS_MAX_KEY_BYTES || s.data.is_null() {
         return None;
     }
@@ -66,34 +66,32 @@ impl HttpRequestHandler for VtsLogHandler {
             return Status::NGX_DECLINED;
         }
 
-        let r: *const ngx_http_request_t = (&*req).into();
+        let r: &ngx_http_request_t = req.as_ref();
 
-        // SAFETY: nginx hands us a live request for the duration of the
-        // LOG_PHASE call, and every pointer we chase off it is
-        // null-checked before use.
-        unsafe {
-            // Skip Prometheus scrapes: the vts_status content handler
-            // sets a non-NULL ctx on the request before rendering,
-            // which lets us exclude /status from server_zone counters
-            // here.  Otherwise every scrape would inflate
-            // `nginx_vts_server_requests_total` for whichever vhost
-            // hosts /status.  The slot holds a bare sentinel address,
-            // so we only test it for NULL and never dereference it.
+        // Skip Prometheus scrapes: the vts_status content handler sets
+        // a non-NULL ctx on the request before rendering, which lets us
+        // exclude /status from server_zone counters here.  Otherwise
+        // every scrape would inflate `nginx_vts_server_requests_total`
+        // for whichever vhost hosts /status.  The slot holds a bare
+        // sentinel address, so we only test it for NULL and never
+        // dereference it.
+        //
+        // SAFETY: nginx allocates `ctx` with one slot per module and
+        // only writes this static during initialization.
+        let ctx = unsafe {
             let module = &*std::ptr::addr_of!(crate::module::ngx_http_vts_module);
-            let ctx = *(*r).ctx.add(module.ctx_index);
-            if !ctx.is_null() {
-                return Status::NGX_DECLINED;
-            }
-
-            // The elapsed request time is the same for the server
-            // zone and for every upstream attempt, so read the clock
-            // once.
-            let request_time =
-                crate::calculate_request_time((*r).start_sec as u64, (*r).start_msec as u64);
-
-            record_server_zone(r, request_time);
-            record_upstream_and_cache(r, request_time);
+            *r.ctx.add(module.ctx_index)
+        };
+        if !ctx.is_null() {
+            return Status::NGX_DECLINED;
         }
+
+        // The elapsed request time is the same for the server zone and
+        // for every upstream attempt, so read the clock once.
+        let request_time = crate::calculate_request_time(r.start_sec as u64, r.start_msec as u64);
+
+        record_server_zone(r, request_time);
+        record_upstream_and_cache(r, request_time);
 
         Status::NGX_DECLINED
     }
@@ -104,11 +102,7 @@ impl HttpRequestHandler for VtsLogHandler {
 }
 
 /// Server-zone update, performed for every main request.
-///
-/// # Safety
-///
-/// `r` must be a live `ngx_http_request_t`.
-unsafe fn record_server_zone(r: *const ngx_http_request_t, request_time: u64) {
+fn record_server_zone(r: &ngx_http_request_t, request_time: u64) {
     // Key on the matched server block's first `server_name` rather
     // than the raw `Host` header (`r->headers_in.server`): that
     // header is attacker-controlled and has unbounded cardinality,
@@ -118,38 +112,41 @@ unsafe fn record_server_zone(r: *const ngx_http_request_t, request_time: u64) {
     // A name too long to be a key falls back to the default zone
     // instead of being dropped: a counter that reads high is easier to
     // notice than one that silently stops. See `t/011.long_names.t`.
-    let server_zone = NgxHttpCoreModule::server_conf(&*r)
-        .and_then(|cscf| as_key(&cscf.server_name))
+    // SAFETY: `server_name` points into the configuration pool, which
+    // outlives every request.
+    let server_zone = NgxHttpCoreModule::server_conf(r)
+        .and_then(|cscf| unsafe { as_key(&cscf.server_name) })
         .unwrap_or(DEFAULT_SERVER_ZONE);
 
-    let status = match (*r).headers_out.status {
+    let status = match r.headers_out.status {
         0 => 200,
         s => s as u16,
     };
 
-    let bytes_in = to_u64((*r).request_length);
-    let bytes_out = (*r).connection.as_ref().map_or(0, |c| to_u64(c.sent));
+    let bytes_in = to_u64(r.request_length);
+    // SAFETY: a request being logged still owns its connection.
+    let bytes_out = unsafe { r.connection.as_ref() }.map_or(0, |c| to_u64(c.sent));
 
     crate::track_server_request(server_zone, status, bytes_in, bytes_out, request_time);
 }
 
 /// Upstream and cache updates, performed only when the request went
 /// through the upstream framework.
-///
-/// # Safety
-///
-/// `r` must be a live `ngx_http_request_t`.
-unsafe fn record_upstream_and_cache(r: *const ngx_http_request_t, request_time: u64) {
-    let Some(u) = (*r).upstream.as_ref() else {
+fn record_upstream_and_cache(r: &ngx_http_request_t, request_time: u64) {
+    // SAFETY: `upstream` is either null or owned by this request.
+    let Some(u) = (unsafe { r.upstream.as_ref() }) else {
         return;
     };
 
-    // Get upstream name from the upstream configuration.
-    let upstream_name = u
-        .conf
-        .as_ref()
-        .and_then(|conf| conf.upstream.as_ref())
-        .and_then(|uscf| as_key(&uscf.host));
+    // Get upstream name from the upstream configuration.  SAFETY: both
+    // hops point into the configuration pool, which outlives the
+    // request.
+    let upstream_name = unsafe {
+        u.conf
+            .as_ref()
+            .and_then(|conf| conf.upstream.as_ref())
+            .and_then(|uscf| as_key(&uscf.host))
+    };
 
     // Walk `r->upstream_states` so each upstream attempt is recorded
     // as its own sample.  For requests with no retry this is one
@@ -163,11 +160,16 @@ unsafe fn record_upstream_and_cache(r: *const ngx_http_request_t, request_time: 
     // Entries whose `peer` is NULL or empty are skipped: that's the
     // cache-HIT path where `r->upstream` exists but no peer was ever
     // contacted, plus init-time slots before peer selection.
-    if let (Some(upstream_name), Some(states)) = (upstream_name, (*r).upstream_states.as_ref()) {
-        let elts = states.elts as *const ngx_http_upstream_state_t;
-        for i in 0..states.nelts {
-            let st = &*elts.add(i);
-            let Some(peer) = st.peer.as_ref().and_then(|p| as_key(p)) else {
+    // SAFETY: `upstream_states` is either null or an array owned by
+    // this request, holding `ngx_http_upstream_state_t` elements.
+    let states = unsafe { r.upstream_states.as_ref().map(|a| a.as_slice()) };
+
+    if let (Some(upstream_name), Some(states)) = (upstream_name, states) {
+        let states: &[ngx_http_upstream_state_t] = states;
+        for st in states {
+            // SAFETY: `peer` is either null or points into the
+            // request's pool.
+            let Some(peer) = (unsafe { st.peer.as_ref().and_then(|p| as_key(p)) }) else {
                 continue;
             };
 
@@ -202,26 +204,26 @@ unsafe fn record_upstream_and_cache(r: *const ngx_http_request_t, request_time: 
 /// against `sh->size`), so we multiply each by `bsize` to recover
 /// bytes.
 ///
-/// # Safety
-///
-/// `u` and `r` must be the live upstream and request structs.
 #[cfg(ngx_feature = "http_cache")]
-unsafe fn record_cache(u: &ngx_http_upstream_t, r: *const ngx_http_request_t) {
+fn record_cache(u: &ngx_http_upstream_t, r: &ngx_http_request_t) {
     let cache_status = u.cache_status();
     if cache_status == 0 {
         return;
     }
 
-    let Some(fc) = (*r).cache.as_ref().and_then(|c| c.file_cache.as_ref()) else {
+    // SAFETY: each hop is null-checked, and the file cache and its zone
+    // live for the cycle.
+    let Some(fc) = (unsafe { r.cache.as_ref().and_then(|c| c.file_cache.as_ref()) }) else {
         return;
     };
-    let Some(zone) = fc.shm_zone.as_ref().and_then(|z| as_key(&z.shm.name)) else {
+    let Some(zone) = (unsafe { fc.shm_zone.as_ref().and_then(|z| as_key(&z.shm.name)) }) else {
         return;
     };
 
     let bsize = fc.bsize as u64;
     let max_size = to_u64(fc.max_size) * bsize;
-    let used_size = fc.sh.as_ref().map_or(0, |sh| to_u64(sh.size) * bsize);
+    // SAFETY: `sh` lives in the shared zone for the life of the cycle.
+    let used_size = unsafe { fc.sh.as_ref() }.map_or(0, |sh| to_u64(sh.size) * bsize);
 
     crate::track_cache_status(zone, cache_status as u8, max_size, used_size);
 }
