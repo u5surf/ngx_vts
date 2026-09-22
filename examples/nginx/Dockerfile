@@ -29,7 +29,7 @@ RUN wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     && cd nginx-src && ./configure --with-compat >/dev/null
 
 WORKDIR /build/ngx_vts_rust
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY config config.make ./
 COPY src ./src
 
@@ -56,7 +56,7 @@ RUN wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     && mv "nginx-${NGINX_VERSION}" nginx-src \
     && rm "nginx-${NGINX_VERSION}.tar.gz"
 
-# Module sources (C wrapper + module entrypoint) plus the prebuilt
+# Module source (the C module entrypoint) plus the prebuilt
 # cdylib from Stage 1.  Layout must match what the addon `config`
 # script expects: `target/release/libngx_vts_rust.so` relative to the
 # addon directory.

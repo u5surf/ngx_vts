@@ -12,4 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ngx = { git = "https://github.com/nginx/ngx-rust" }
+# Direct dependency purely so `build.rs` receives the `DEP_NGINX_*`
+# metadata (Cargo passes it to direct dependents only).
+nginx-sys = { git = "https://github.com/nginx/ngx-rust" }
 libc = "0.2"
