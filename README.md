@@ -297,6 +297,21 @@ Keys are derived from nginx configuration (the matched server block's
 first `server_name`, the upstream block name) — never from the raw `Host`
 header — so attacker-controlled values cannot expand the key space.
 
+## Persistence
+
+Counters live only in shared memory; nothing is written to disk.
+
+| Operation | Counters |
+|---|---|
+| `nginx -s reload` | Kept — nginx reuses the zone |
+| Reload after changing the `vts_zone` size | Reset to zero — a new zone is allocated |
+| Stop / start, container restart | Reset to zero |
+| Binary upgrade (`USR2`) | Reset to zero — the new master does not inherit the zone |
+
+All `*_total` metrics are Prometheus counters, so query them with
+`rate()` / `increase()`, which detect and absorb resets. What a restart
+loses is only the increment since the last scrape.
+
 ## Development
 
 ### Tests
@@ -326,7 +341,8 @@ The list below tracks known gaps relative to the original
 - JSON / HTML / JSONP output formats — only Prometheus text is emitted.
 - `/control` API for reset/delete.
 - `vts_dump` directive (periodic on-disk dump for counter recovery
-  across restarts).
+  across restarts). Not planned while output is Prometheus-only; see
+  [Persistence](#persistence).
 
 ### Filtering and limits
 - Filter zones (`vhost_traffic_status_filter_by_set_key`,

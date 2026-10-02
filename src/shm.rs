@@ -746,10 +746,12 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         None => return NGX_ERROR as ngx_int_t,
     };
 
-    // The slab pool's `data` field persists across reload and binary
-    // upgrade because it lives in the shared memory itself.  Non-null
-    // means a previous cycle (or this same cycle, on reload) already
-    // built the shared state — just re-publish the pointer.
+    // The slab pool's `data` field lives in the shared memory itself, so
+    // it survives a reload as long as nginx reuses the zone (same name,
+    // size and tag).  Non-null means a previous cycle already built the
+    // shared state — just re-publish the pointer.  A binary upgrade does
+    // not get here: the zone is an anonymous mapping that the exec'd
+    // master does not inherit, so counters start from zero.
     let existing = alloc.as_mut().data as *mut VtsShared;
     if !existing.is_null() {
         shm_zone_ref.data = existing as *mut c_void;
