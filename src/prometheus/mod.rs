@@ -68,6 +68,23 @@ impl PrometheusFormatter {
         ));
         output
     }
+
+    /// Format the time the counters started from zero.
+    ///
+    /// Deliberately unprefixed: `process_start_time_seconds` is the name
+    /// that the OpenTelemetry Collector's `metricstarttime` processor and
+    /// Datadog's `use_process_start_time` look for by default, and both
+    /// use it to tell a restart from a counter they have only just
+    /// started watching.  The value is when the zone was built rather
+    /// than when the process started, because that is when the counters
+    /// were last zero: a reload keeps them, and so keeps this.
+    pub fn format_start_time(&self, start_time: u64) -> String {
+        format!(
+            "# HELP process_start_time_seconds Time the VTS counters started from zero, in seconds since the epoch\n\
+             # TYPE process_start_time_seconds gauge\n\
+             process_start_time_seconds {start_time}\n\n"
+        )
+    }
 }
 
 impl Default for PrometheusFormatter {
@@ -140,6 +157,9 @@ pub fn generate_vts_status_content(
 
     content.push_str(&formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION")));
     content.push_str(&formatter.format_connection_stats(manager.get_connection_stats()));
+    if let Some(start_time) = crate::shm::start_time() {
+        content.push_str(&formatter.format_start_time(start_time));
+    }
     if let Some(info) = crate::shm::shm_info() {
         content.push_str(&formatter.format_shm_info(&info));
     }
@@ -222,6 +242,14 @@ mod tests {
         assert!(out.contains("# HELP nginx_vts_info Nginx VTS module information"));
         assert!(out.contains("# TYPE nginx_vts_info gauge"));
         assert!(out.contains("nginx_vts_info{hostname=\"h.example.test\",version=\"1.2.3\"} 1"));
+    }
+
+    #[test]
+    fn format_start_time_is_an_unprefixed_gauge() {
+        let out = PrometheusFormatter::with_prefix("custom_").format_start_time(1_700_000_000);
+        assert!(out.contains("# TYPE process_start_time_seconds gauge"));
+        assert!(out.contains("\nprocess_start_time_seconds 1700000000\n"));
+        assert!(!out.contains("custom_"));
     }
 
     #[test]

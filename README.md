@@ -312,6 +312,64 @@ All `*_total` metrics are Prometheus counters, so query them with
 `rate()` / `increase()`, which detect and absorb resets. What a restart
 loses is only the increment since the last scrape.
 
+When a zone is configured, `/status` also reports when the counters
+last started from zero:
+
+```
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1791039391
+```
+
+It is the time the zone was built, not the time a process started, so
+it stays put across a reload and moves forward exactly when the
+counters reset. It is unprefixed because that is the name other
+collectors look for to tell a reset from a series they have only just
+started watching.
+
+**OpenTelemetry Collector** — scrape `/status` with the `prometheus`
+receiver and let the `metric_start_time` processor take the start time
+from this metric, before any batching:
+
+```yaml
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: nginx-vts
+          metrics_path: /status
+          static_configs:
+            - targets: ["localhost:80"]
+
+processors:
+  metric_start_time:
+    strategy: start_time_metric
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [metric_start_time]
+      exporters: [otlp]   # Datadog, Mackerel, or any OTLP backend
+```
+
+**Datadog Agent** — the `openmetrics` check reads the same metric with
+`use_process_start_time`, so counters that started after the Agent did
+are counted from zero on the first scrape instead of being dropped:
+
+```yaml
+instances:
+  - openmetrics_endpoint: http://localhost/status
+    namespace: nginx_vts
+    metrics: [".*"]
+    use_process_start_time: true
+```
+
+**Mackerel** — send OTLP through the Collector configuration above;
+Mackerel stores the counters as cumulative sums and its PromQL
+`rate()` / `increase()` absorb resets. Scraping with
+`mackerel-plugin-prometheus-exporter` instead posts every value as is,
+so a restart shows up as a drop to zero on the graph.
+
 ## Development
 
 ### Tests
