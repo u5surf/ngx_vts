@@ -38,8 +38,7 @@ qr/\nprocess_start_time_seconds \d{10}\n/
 --- request
 GET /status
 --- response_body_like eval
-my $now = time;
-qr/\nprocess_start_time_seconds (\d+)\n(?(?{ $1 <= $now && $1 > $now - 300 })|(*FAIL))/
+qr/\nprocess_start_time_seconds (\d+)\n(?(?{ $1 <= time && $1 > time - 300 })|(*FAIL))/
 
 
 
