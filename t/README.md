@@ -42,6 +42,7 @@ cpanm --notest Test::Nginx
 | `011.long_names.t` | `037.upstream_long_peer_name.t` | a unix socket peer keeps its whole path; a server name that fits is the zone, and one that does not falls back to the default rather than losing the request |
 | `012.upstream_server_up.t` | `024.upstream_check.t` (the `down` half) | a peer is reported down when the configuration says so or when it has reached `max_fails`, up otherwise, and `max_fails 0` does not read as down |
 | `013.label_escaping.t` | no original; the original's display escapes nothing either | a `"` in a `server_name` or a unix socket path is escaped in every label that carries it, so one awkward name does not make the whole response unparseable |
+| `014.start_time.t` | no original | `process_start_time_seconds` is reported, unprefixed, as a recent gauge when a zone is configured, and not at all without one |
 
 ## What is not ported, and why
 

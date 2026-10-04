@@ -362,6 +362,10 @@ pub struct VtsShared {
     pub servers: RwLock<ServerMap<SlabPool>>,
     pub upstreams: RwLock<UpstreamMap<SlabPool>>,
     pub caches: RwLock<CacheMap<SlabPool>>,
+    /// When the counters started from zero, in seconds since the epoch.
+    /// Set once when the zone is built, so it survives a reload that
+    /// reuses the zone and moves forward whenever the counters reset.
+    pub start_time: u64,
 }
 
 /// Pointer published once by `vts_init_shm_zone` (in the master, before
@@ -432,6 +436,18 @@ pub fn shm_info() -> Option<ShmInfo> {
 
 #[cfg(test)]
 pub fn shm_info() -> Option<ShmInfo> {
+    None
+}
+
+/// When the zone's counters started from zero, or `None` when no
+/// `vts_zone` is configured.
+#[cfg(not(test))]
+pub fn start_time() -> Option<u64> {
+    shared().map(|s| s.start_time)
+}
+
+#[cfg(test)]
+pub fn start_time() -> Option<u64> {
     None
 }
 
@@ -778,6 +794,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         servers: RwLock::new(servers),
         upstreams: RwLock::new(upstreams),
         caches: RwLock::new(caches),
+        start_time: ngx_time() as u64,
     };
     let shared_ptr: *mut VtsShared = match allocate(shared, &alloc) {
         Ok(p) => p.as_ptr(),
