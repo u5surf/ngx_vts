@@ -277,6 +277,7 @@ pub extern "C" fn vts_collect_nginx_connections() {
                 waiting: s.waiting,
                 accepted: s.accepted,
                 handled: s.handled,
+                requests: s.requests,
             }
         } else {
             let cycle = ngx_cycle;
@@ -328,6 +329,7 @@ pub extern "C" fn vts_collect_nginx_connections() {
             writing: 1,
             accepted: 16,
             handled: 16,
+            requests: 16,
             ..Default::default()
         });
     }
@@ -413,6 +415,7 @@ mod integration_tests {
             writing: 1,
             accepted: 16,
             handled: 16,
+            requests: 16,
             ..Default::default()
         });
 
@@ -508,6 +511,7 @@ mod integration_tests {
             writing: 1,
             accepted: 16,
             handled: 16,
+            requests: 16,
             ..Default::default()
         });
         update_server_zone_stats("test2-example.com", 200, 50000, 2000000, 125);
@@ -547,9 +551,14 @@ mod integration_tests {
         println!("=== End ISSUE6 Output ===");
 
         // Verify nginx_vts_info metric
-        assert!(content.contains("# HELP nginx_vts_info Nginx VTS module information"));
+        assert!(content.contains("# HELP nginx_vts_info Nginx info"));
         assert!(content.contains("# TYPE nginx_vts_info gauge"));
         assert!(content.contains("nginx_vts_info{hostname="));
+        assert!(content.contains(concat!(
+            "module_version=\"",
+            env!("CARGO_PKG_VERSION"),
+            "\""
+        )));
 
         // Verify connection metrics
         assert!(content.contains("# HELP nginx_vts_main_connections Nginx connections"));
@@ -557,6 +566,7 @@ mod integration_tests {
         assert!(content.contains("nginx_vts_main_connections{status=\"writing\"} 1"));
         assert!(content.contains("nginx_vts_main_connections{status=\"accepted\"} 16"));
         assert!(content.contains("nginx_vts_main_connections{status=\"handled\"} 16"));
+        assert!(content.contains("nginx_vts_main_connections{status=\"requests\"} 16"));
 
         // Verify server zone metrics with test-unique identifiers
         assert!(content.contains("# HELP nginx_vts_server_requests_total The requests counter"));
@@ -566,6 +576,7 @@ mod integration_tests {
         assert!(content.contains(
             "nginx_vts_server_requests_total{host=\"test2-example.com\",code=\"4xx\"} 1"
         ));
+        assert!(content.contains("nginx_vts_server_requests_total{host=\"*\",code=\"2xx\"} 1"));
         assert!(content.contains("# HELP nginx_vts_server_bytes_total The request/response bytes"));
         assert!(content
             .contains("nginx_vts_server_bytes_total{host=\"test2-example.com\",direction=\"in\"}"));
@@ -675,9 +686,11 @@ mod integration_tests {
         assert!(content.contains("# VTS Status: Active"));
         assert!(content.contains("# Prometheus Metrics:"));
 
-        // Server families are always declared, even before any traffic.
+        // Server families are always there: the `host="*"` row has values
+        // even before any traffic.
         assert!(content.contains("# TYPE nginx_vts_server_requests_total counter"));
         assert!(content.contains("# TYPE nginx_vts_server_bytes_total counter"));
+        assert!(content.contains("nginx_vts_server_requests_total{host=\"*\",code=\"2xx\"}"));
     }
 
     // ---------- helpers ----------

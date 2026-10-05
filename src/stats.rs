@@ -76,4 +76,6 @@ pub struct VtsConnectionStats {
     pub accepted: u64,
     /// Total handled connections.
     pub handled: u64,
+    /// Total client requests.
+    pub requests: u64,
 }

@@ -129,7 +129,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (code) (rate(nginx_vts_server_requests_total[1m]))",
+          "expr": "sum by (code) (rate(nginx_vts_server_requests_total{host=\"*\"}[1m]))",
           "legendFormat": "{{code}}"
         }
       ]

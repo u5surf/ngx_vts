@@ -30,7 +30,7 @@ use std::sync::OnceLock;
 /// counters.  That's fine for monitoring — the drift between reads is
 /// sub-microsecond.
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)] // `requests` mirrors stub_status's $requests; reserved for a future `_requests_total` metric.
+#[cfg_attr(test, allow(dead_code))] // Read only by the collector, which unit tests stub out.
 pub struct ConnectionStats {
     pub active: u64,
     pub reading: u64,

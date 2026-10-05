@@ -1,6 +1,6 @@
 //! `nginx_vts_main_connections`, ported from the original module's main
-//! block.  The original declares every state a gauge, `accepted` and
-//! `handled` included, so this does too: a query that
+//! block.  The original declares every state a gauge, `accepted`,
+//! `handled` and `requests` included, so this does too: a query that
 //! wraps them in `rate()` works either way, and one written against the
 //! original keeps its series.
 
@@ -20,6 +20,7 @@ impl PrometheusFormatter {
             ("active", connections.active),
             ("handled", connections.handled),
             ("reading", connections.reading),
+            ("requests", connections.requests),
             ("waiting", connections.waiting),
             ("writing", connections.writing),
         ] {
@@ -38,7 +39,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_connection_stats_emits_all_six_states() {
+    fn format_connection_stats_emits_all_seven_states() {
         let stats = VtsConnectionStats {
             active: 7,
             reading: 1,
@@ -46,6 +47,7 @@ mod tests {
             waiting: 4,
             accepted: 1000,
             handled: 999,
+            requests: 1234,
         };
         let out = PrometheusFormatter::new().format_connection_stats(&stats);
         assert!(out.contains("# TYPE nginx_vts_main_connections gauge"));
@@ -53,6 +55,7 @@ mod tests {
         assert!(out.contains("nginx_vts_main_connections{status=\"active\"} 7"));
         assert!(out.contains("nginx_vts_main_connections{status=\"handled\"} 999"));
         assert!(out.contains("nginx_vts_main_connections{status=\"reading\"} 1"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"requests\"} 1234"));
         assert!(out.contains("nginx_vts_main_connections{status=\"waiting\"} 4"));
         assert!(out.contains("nginx_vts_main_connections{status=\"writing\"} 2"));
     }

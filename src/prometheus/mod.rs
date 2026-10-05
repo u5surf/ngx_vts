@@ -53,35 +53,42 @@ impl PrometheusFormatter {
         }
     }
 
-    /// Format nginx basic info metrics into Prometheus format
-    pub fn format_nginx_info(&self, hostname: &str, version: &str) -> String {
-        let mut output = String::new();
-        output.push_str(&format!(
-            "# HELP {}info Nginx VTS module information\n",
-            self.metric_prefix
-        ));
-        output.push_str(&format!("# TYPE {}info gauge\n", self.metric_prefix));
-        output.push_str(&format!(
-            "{}info{{hostname=\"{}\",version=\"{}\"}} 1\n\n",
-            self.metric_prefix,
+    /// `nginx_vts_info`, labelled as the original module labels it:
+    /// `version` is nginx's, `module_version` is this module's.
+    pub fn format_nginx_info(
+        &self,
+        hostname: &str,
+        module_version: &str,
+        nginx_version: &str,
+    ) -> String {
+        let prefix = &self.metric_prefix;
+        format!(
+            "# HELP {prefix}info Nginx info\n\
+             # TYPE {prefix}info gauge\n\
+             {prefix}info{{hostname=\"{}\",module_version=\"{}\",version=\"{}\"}} 1\n\n",
             label::escape(hostname),
-            label::escape(version)
-        ));
-        output
+            label::escape(module_version),
+            label::escape(nginx_version)
+        )
     }
 
-    /// Format the time the counters started from zero.
+    /// Format the time the counters started from zero, under two names.
     ///
-    /// Deliberately unprefixed: `process_start_time_seconds` is the name
-    /// that the OpenTelemetry Collector's `metricstarttime` processor and
-    /// Datadog's `use_process_start_time` look for by default, and both
-    /// use it to tell a restart from a counter they have only just
-    /// started watching.  The value is when the zone was built rather
-    /// than when the process started, because that is when the counters
-    /// were last zero: a reload keeps them, and so keeps this.
+    /// `nginx_vts_start_time_seconds` is the original module's name for
+    /// it.  `process_start_time_seconds` is deliberately unprefixed: it is
+    /// the name that the OpenTelemetry Collector's `metric_start_time`
+    /// processor and Datadog's `use_process_start_time` look for by
+    /// default, and both use it to tell a restart from a counter they have
+    /// only just started watching.  The value is when the zone was built
+    /// rather than when the process started, because that is when the
+    /// counters were last zero: a reload keeps them, and so keeps this.
     pub fn format_start_time(&self, start_time: u64) -> String {
+        let prefix = &self.metric_prefix;
         format!(
-            "# HELP process_start_time_seconds Time the VTS counters started from zero, in seconds since the epoch\n\
+            "# HELP {prefix}start_time_seconds Nginx start time\n\
+             # TYPE {prefix}start_time_seconds gauge\n\
+             {prefix}start_time_seconds {start_time}\n\n\
+             # HELP process_start_time_seconds Time the VTS counters started from zero, in seconds since the epoch\n\
              # TYPE process_start_time_seconds gauge\n\
              process_start_time_seconds {start_time}\n\n"
         )
@@ -156,7 +163,11 @@ pub fn generate_vts_status_content(
 
     content.push_str("# Prometheus Metrics:\n");
 
-    content.push_str(&formatter.format_nginx_info(&get_hostname(), env!("CARGO_PKG_VERSION")));
+    content.push_str(&formatter.format_nginx_info(
+        &get_hostname(),
+        env!("CARGO_PKG_VERSION"),
+        nginx_version(),
+    ));
     content.push_str(&formatter.format_connection_stats(manager.get_connection_stats()));
     if let Some(start_time) = crate::shm::start_time() {
         content.push_str(&formatter.format_start_time(start_time));
@@ -173,6 +184,19 @@ pub fn generate_vts_status_content(
     content.push_str(&formatter.format_cache_stats(&cache_zones));
 
     content
+}
+
+/// The version of the nginx the module was built against.
+fn nginx_version() -> &'static str {
+    #[cfg(not(test))]
+    {
+        ngx::ffi::NGINX_VERSION.to_str().unwrap_or("")
+    }
+
+    #[cfg(test)]
+    {
+        "1.0.0"
+    }
 }
 
 /// Get system hostname (nginx-independent version for testing).
@@ -228,19 +252,28 @@ mod tests {
     }
 
     #[test]
-    fn format_nginx_info_includes_hostname_and_version() {
-        let out = PrometheusFormatter::new().format_nginx_info("h.example.test", "1.2.3");
-        assert!(out.contains("# HELP nginx_vts_info Nginx VTS module information"));
+    fn format_nginx_info_labels_both_versions() {
+        let out = PrometheusFormatter::new().format_nginx_info("h.example.test", "0.1.0", "1.27.0");
         assert!(out.contains("# TYPE nginx_vts_info gauge"));
-        assert!(out.contains("nginx_vts_info{hostname=\"h.example.test\",version=\"1.2.3\"} 1"));
+        assert!(out.contains(
+            "nginx_vts_info{hostname=\"h.example.test\",module_version=\"0.1.0\",version=\"1.27.0\"} 1"
+        ));
     }
 
     #[test]
-    fn format_start_time_is_an_unprefixed_gauge() {
-        let out = PrometheusFormatter::with_prefix("custom_").format_start_time(1_700_000_000);
+    fn format_start_time_reports_both_names() {
+        let out = PrometheusFormatter::new().format_start_time(1_700_000_000);
+        assert!(out.contains("# TYPE nginx_vts_start_time_seconds gauge"));
+        assert!(out.contains("\nnginx_vts_start_time_seconds 1700000000\n"));
         assert!(out.contains("# TYPE process_start_time_seconds gauge"));
         assert!(out.contains("\nprocess_start_time_seconds 1700000000\n"));
-        assert!(!out.contains("custom_"));
+    }
+
+    #[test]
+    fn process_start_time_ignores_the_prefix() {
+        let out = PrometheusFormatter::with_prefix("custom_").format_start_time(1);
+        assert!(out.contains("\ncustom_start_time_seconds 1\n"));
+        assert!(out.contains("\nprocess_start_time_seconds 1\n"));
     }
 
     #[test]

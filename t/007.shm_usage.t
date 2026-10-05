@@ -9,13 +9,13 @@
 # refuse an insert while the used figure still reads well below the maximum.
 # What an operator needs is what the slab has left.
 #
-# This port drops used_size for the same reason and reports free_size and a
-# node count instead.
+# This port keeps the original's four labels, but used_size is what the slab
+# has spent - the configured size less free_size - rather than that sum.
 
 use Test::Nginx::Socket;
 
 repeat_each(1);
-plan tests => 18;
+plan tests => 20;
 no_shuffle();
 run_tests();
 
@@ -106,3 +106,15 @@ qr/nginx_vts_main_shm_usage_bytes\{shared="free_size"\} [1-9]\d*/
 GET /status
 --- response_body_like eval
 qr/# TYPE nginx_vts_main_shm_usage_bytes gauge\n/
+
+
+
+=== TEST 7: what is used and what is free add up to the zone
+--- http_config
+    vts_zone main 1m;
+--- config
+    location /status { vts_status; }
+--- request
+GET /status
+--- response_body_like eval
+qr/shared="used_size"\} (\d+)\n.*\n.*shared="free_size"\} (\d+)\n(?(?{ $1 > 0 && $1 + $2 == 1048576 })|(*FAIL))/
