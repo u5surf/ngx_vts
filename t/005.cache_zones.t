@@ -46,7 +46,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/origin/,
-    qr/nginx_vts_cache_requests_total\{zone="cache_one",status="miss"\} [1-9]\d*/,
+    qr/nginx_vts_cache_requests_total\{cache_zone="cache_one",status="miss"\} [1-9]\d*/,
 ]
 
 
@@ -74,7 +74,7 @@ __DATA__
 [
     qr/origin/,
     qr/origin/,
-    qr/nginx_vts_cache_requests_total\{zone="cache_two",status="hit"\} [1-9]\d*/,
+    qr/nginx_vts_cache_requests_total\{cache_zone="cache_two",status="hit"\} [1-9]\d*/,
 ]
 
 
@@ -101,7 +101,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/origin/,
-    qr/status="bypass".*\n.*status="expired".*\n.*status="stale".*\n.*status="updating".*\n.*status="revalidated".*\n.*status="scarce"/,
+    qr/(?=[\s\S]*status="hit")(?=[\s\S]*status="miss")(?=[\s\S]*status="bypass")(?=[\s\S]*status="expired")(?=[\s\S]*status="stale")(?=[\s\S]*status="updating")(?=[\s\S]*status="revalidated")(?=[\s\S]*status="scarce")/,
 ]
 
 
@@ -128,7 +128,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/origin/,
-    qr/nginx_vts_cache_size_bytes\{zone="cache_four",type="max"\} [1-9]\d*/,
+    qr/nginx_vts_cache_usage_bytes\{cache_zone="cache_four",cache_size="max"\} [1-9]\d*/,
 ]
 
 
@@ -162,5 +162,5 @@ __DATA__
 [
     qr/origin/,
     qr/origin/,
-    qr/zone="cache_five".*\n(.*\n)*.*zone="cache_six"/,
+    qr/cache_zone="cache_five".*\n(.*\n)*.*cache_zone="cache_six"/,
 ]

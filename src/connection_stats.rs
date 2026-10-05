@@ -4,7 +4,7 @@
 //! populated by nginx core when (and only when) `NGX_STAT_STUB` is
 //! defined — i.e. when nginx is built with
 //! `--with-http_stub_status_module`.  When they're available we read
-//! them directly to surface accurate `nginx_vts_connections{state=…}`
+//! them directly to surface accurate `nginx_vts_main_connections{status=…}`
 //! counters; when they aren't, the caller falls back to a
 //! coarser cycle-table walk.
 //!

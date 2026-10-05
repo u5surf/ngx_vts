@@ -32,11 +32,11 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="localhost"\} [1-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="2xx"\} [1-9]\d*/,
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="localhost"\} [2-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="2xx"\} [2-9]\d*/,
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="localhost"\} [3-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="2xx"\} [3-9]\d*/,
 ]
 
 
@@ -57,7 +57,7 @@ __DATA__
     qr/\Aok\z/,
     qr/nope/,
     qr/nope/,
-    qr/nginx_vts_server_responses_total\{zone="localhost",status="4xx"\} 2\b/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="4xx"\} 2\b/,
 ]
 
 
@@ -73,9 +73,9 @@ __DATA__
 --- response_body_like eval
 [
     qr/\A0123456789\z/,
-    qr/nginx_vts_server_bytes_total\{zone="localhost",direction="out"\} (\d+)/,
+    qr/nginx_vts_server_bytes_total\{host="localhost",direction="out"\} (\d+)/,
     qr/\A0123456789\z/,
-    qr/nginx_vts_server_bytes_total\{zone="localhost",direction="out"\} [1-9]\d{2,}/,
+    qr/nginx_vts_server_bytes_total\{host="localhost",direction="out"\} [1-9]\d{2,}/,
 ]
 
 
@@ -99,5 +99,5 @@ __DATA__
     qr/\Apeer\z/,
     qr/\Apeer\z/,
     qr/\Apeer\z/,
-    qr/nginx_vts_upstream_requests_total\{upstream="backend",server="127\.0\.0\.1:1985"\} 3\b/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1985",code="2xx"\} 3\b/,
 ]

@@ -1,19 +1,22 @@
-//! `nginx_vts_upstream_*` series: requests, bytes, response_seconds
-//! summary, server_up gauge, status counters, and the
+//! `nginx_vts_upstream_*` series, labelled `upstream` and `backend` as in
+//! the original module: bytes, status-class request counters, request and
+//! response time totals and averages, and the
 //! `response_duration_seconds` classic histogram (compatible with
 //! `histogram_quantile()` for p50/p90/p99 panels).
+//!
+//! `upstream_server_up` has no counterpart in the original; it comes from
+//! a walk of the group rather than from the counters.
 
 use std::collections::HashMap;
 
 use super::{format_le_bound, label, PrometheusFormatter};
-use crate::upstream_stats::{UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
+use crate::upstream_stats::{UpstreamServerStats, UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
 
 impl PrometheusFormatter {
     /// Format upstream statistics into Prometheus metrics.
     ///
-    /// Generates metrics for upstream servers including request counts,
-    /// byte transfers, response times, status code class counts, and
-    /// the response-duration histogram.
+    /// Renders nothing when no upstream has been used, as the original
+    /// leaves the whole section out.
     pub fn format_upstream_stats(
         &self,
         upstream_zones: &HashMap<String, UpstreamZone>,
@@ -24,71 +27,96 @@ impl PrometheusFormatter {
             return output;
         }
         let prefix = &self.metric_prefix;
+        let rows: Vec<(String, &UpstreamServerStats)> = upstream_zones
+            .iter()
+            .flat_map(|(upstream, zone)| {
+                let upstream = label::escape(upstream).into_owned();
+                zone.servers.iter().map(move |(backend, stats)| {
+                    (
+                        format!(
+                            "upstream=\"{upstream}\",backend=\"{}\"",
+                            label::escape(backend)
+                        ),
+                        stats,
+                    )
+                })
+            })
+            .collect();
 
-        // nginx_vts_upstream_requests_total
         output.push_str(&format!(
-            "# HELP {prefix}upstream_requests_total Total upstream requests\n"
+            "# HELP {prefix}upstream_bytes_total The request/response bytes\n\
+             # TYPE {prefix}upstream_bytes_total counter\n"
         ));
-        output.push_str(&format!("# TYPE {prefix}upstream_requests_total counter\n"));
-        for (upstream_name, zone) in upstream_zones {
-            let upstream_name = label::escape(upstream_name);
-            for (server_addr, stats) in &zone.servers {
-                let server_addr = label::escape(server_addr);
+        for (labels, stats) in &rows {
+            output.push_str(&format!(
+                "{prefix}upstream_bytes_total{{{labels},direction=\"in\"}} {}\n\
+                 {prefix}upstream_bytes_total{{{labels},direction=\"out\"}} {}\n",
+                stats.in_bytes, stats.out_bytes
+            ));
+        }
+        output.push('\n');
+
+        output.push_str(&format!(
+            "# HELP {prefix}upstream_requests_total The upstream requests counter\n\
+             # TYPE {prefix}upstream_requests_total counter\n"
+        ));
+        for (labels, stats) in &rows {
+            for (code, value) in [
+                ("1xx", stats.responses.status_1xx),
+                ("2xx", stats.responses.status_2xx),
+                ("3xx", stats.responses.status_3xx),
+                ("4xx", stats.responses.status_4xx),
+                ("5xx", stats.responses.status_5xx),
+            ] {
                 output.push_str(&format!(
-                    "{prefix}upstream_requests_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {}\n",
-                    stats.request_counter
+                    "{prefix}upstream_requests_total{{{labels},code=\"{code}\"}} {value}\n"
                 ));
             }
         }
         output.push('\n');
 
-        // nginx_vts_upstream_bytes_total
-        output.push_str(&format!(
-            "# HELP {prefix}upstream_bytes_total Total bytes transferred to/from upstream\n"
-        ));
-        output.push_str(&format!("# TYPE {prefix}upstream_bytes_total counter\n"));
-        for (upstream_name, zone) in upstream_zones {
-            let upstream_name = label::escape(upstream_name);
-            for (server_addr, stats) in &zone.servers {
-                let server_addr = label::escape(server_addr);
+        // Times are kept in milliseconds; the original reports seconds.
+        for (name, help, kind, value) in [
+            (
+                "request_seconds_total",
+                "The request Processing time including upstream in seconds",
+                "counter",
+                (|s: &UpstreamServerStats| s.request_time_total as f64)
+                    as fn(&UpstreamServerStats) -> f64,
+            ),
+            (
+                "request_seconds",
+                "The average of request processing times including upstream in seconds",
+                "gauge",
+                UpstreamServerStats::avg_request_time,
+            ),
+            (
+                "response_seconds_total",
+                "The only upstream response processing time in seconds",
+                "counter",
+                |s: &UpstreamServerStats| s.response_time_total as f64,
+            ),
+            (
+                "response_seconds",
+                "The average of only upstream response processing times in seconds",
+                "gauge",
+                UpstreamServerStats::avg_response_time,
+            ),
+        ] {
+            output.push_str(&format!(
+                "# HELP {prefix}upstream_{name} {help}\n\
+                 # TYPE {prefix}upstream_{name} {kind}\n"
+            ));
+            for (labels, stats) in &rows {
                 output.push_str(&format!(
-                    "{prefix}upstream_bytes_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\",direction=\"in\"}} {}\n",
-                    stats.in_bytes
-                ));
-                output.push_str(&format!(
-                    "{prefix}upstream_bytes_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\",direction=\"out\"}} {}\n",
-                    stats.out_bytes
+                    "{prefix}upstream_{name}{{{labels}}} {:.3}\n",
+                    value(stats) / 1000.0
                 ));
             }
+            output.push('\n');
         }
-        output.push('\n');
 
-        // nginx_vts_upstream_response_seconds (avg/total summary).
-        output.push_str(&format!(
-            "# HELP {prefix}upstream_response_seconds Upstream response time statistics\n"
-        ));
-        output.push_str(&format!("# TYPE {prefix}upstream_response_seconds gauge\n"));
-        for (upstream_name, zone) in upstream_zones {
-            let upstream_name = label::escape(upstream_name);
-            for (server_addr, stats) in &zone.servers {
-                let server_addr = label::escape(server_addr);
-                let avg_request_time = stats.avg_request_time() / 1000.0;
-                let avg_response_time = stats.avg_response_time() / 1000.0;
-                let total_request_time = stats.request_time_total as f64 / 1000.0;
-                let total_upstream_time = stats.response_time_total as f64 / 1000.0;
-                for (kind, value) in [
-                    ("request_avg", avg_request_time),
-                    ("upstream_avg", avg_response_time),
-                    ("request_total", total_request_time),
-                    ("upstream_total", total_upstream_time),
-                ] {
-                    output.push_str(&format!(
-                        "{prefix}upstream_response_seconds{{upstream=\"{upstream_name}\",server=\"{server_addr}\",type=\"{kind}\"}} {value:.6}\n"
-                    ));
-                }
-            }
-        }
-        output.push('\n');
+        self.format_upstream_response_histogram(&mut output, &rows);
 
         // nginx_vts_upstream_server_up
         //
@@ -99,57 +127,20 @@ impl PrometheusFormatter {
         // saying nothing is better than saying "up" about an address that is
         // no longer configured.
         output.push_str(&format!(
-            "# HELP {prefix}upstream_server_up Upstream server status (1=up, 0=down)\n"
+            "# HELP {prefix}upstream_server_up Upstream server status (1=up, 0=down)\n\
+             # TYPE {prefix}upstream_server_up gauge\n"
         ));
-        output.push_str(&format!("# TYPE {prefix}upstream_server_up gauge\n"));
-        for ((upstream_name, server_addr), peer) in peer_states {
-            let upstream_name = label::escape(upstream_name);
-            let server_addr = label::escape(server_addr);
+        for ((upstream, backend), peer) in peer_states {
+            let upstream = label::escape(upstream);
+            let backend = label::escape(backend);
             let server_up = if peer.down { 0 } else { 1 };
             output.push_str(&format!(
-                "{prefix}upstream_server_up{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {server_up}\n"
+                "{prefix}upstream_server_up{{upstream=\"{upstream}\",backend=\"{backend}\"}} {server_up}\n"
             ));
         }
         output.push('\n');
 
-        // HTTP status code metrics and response-time histogram.
-        self.format_upstream_status_metrics(&mut output, upstream_zones);
-        self.format_upstream_response_histogram(&mut output, upstream_zones);
-
         output
-    }
-
-    /// `nginx_vts_upstream_responses_total{status="1xx"…"5xx"}` (class buckets).
-    fn format_upstream_status_metrics(
-        &self,
-        output: &mut String,
-        upstream_zones: &HashMap<String, UpstreamZone>,
-    ) {
-        let prefix = &self.metric_prefix;
-        output.push_str(&format!(
-            "# HELP {prefix}upstream_responses_total Upstream responses by status code\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE {prefix}upstream_responses_total counter\n"
-        ));
-        for (upstream_name, zone) in upstream_zones {
-            let upstream_name = label::escape(upstream_name);
-            for (server_addr, stats) in &zone.servers {
-                let server_addr = label::escape(server_addr);
-                for (class, value) in [
-                    ("1xx", stats.responses.status_1xx),
-                    ("2xx", stats.responses.status_2xx),
-                    ("3xx", stats.responses.status_3xx),
-                    ("4xx", stats.responses.status_4xx),
-                    ("5xx", stats.responses.status_5xx),
-                ] {
-                    output.push_str(&format!(
-                        "{prefix}upstream_responses_total{{upstream=\"{upstream_name}\",server=\"{server_addr}\",status=\"{class}\"}} {value}\n"
-                    ));
-                }
-            }
-        }
-        output.push('\n');
     }
 
     /// `nginx_vts_upstream_response_duration_seconds` classic
@@ -158,42 +149,29 @@ impl PrometheusFormatter {
     fn format_upstream_response_histogram(
         &self,
         output: &mut String,
-        upstream_zones: &HashMap<String, UpstreamZone>,
+        rows: &[(String, &UpstreamServerStats)],
     ) {
         let prefix = &self.metric_prefix;
         output.push_str(&format!(
-            "# HELP {prefix}upstream_response_duration_seconds Upstream response time distribution\n"
+            "# HELP {prefix}upstream_response_duration_seconds The histogram of only upstream response processing time\n\
+             # TYPE {prefix}upstream_response_duration_seconds histogram\n"
         ));
-        output.push_str(&format!(
-            "# TYPE {prefix}upstream_response_duration_seconds histogram\n"
-        ));
-
-        for (upstream_name, zone) in upstream_zones {
-            let upstream_name = label::escape(upstream_name);
-            for (server_addr, stats) in &zone.servers {
-                let server_addr = label::escape(server_addr);
-                for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
-                    let bound_s = bound_ms as f64 / 1000.0;
-                    output.push_str(&format!(
-                        "{prefix}upstream_response_duration_seconds_bucket{{upstream=\"{upstream_name}\",server=\"{server_addr}\",le=\"{}\"}} {}\n",
-                        format_le_bound(bound_s),
-                        stats.response_buckets[i]
-                    ));
-                }
-                // +Inf bucket holds every sample, equal to _count.
+        for (labels, stats) in rows {
+            for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
                 output.push_str(&format!(
-                    "{prefix}upstream_response_duration_seconds_bucket{{upstream=\"{upstream_name}\",server=\"{server_addr}\",le=\"+Inf\"}} {}\n",
-                    stats.response_time_counter
-                ));
-                output.push_str(&format!(
-                    "{prefix}upstream_response_duration_seconds_sum{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {:.6}\n",
-                    stats.response_time_total as f64 / 1000.0
-                ));
-                output.push_str(&format!(
-                    "{prefix}upstream_response_duration_seconds_count{{upstream=\"{upstream_name}\",server=\"{server_addr}\"}} {}\n",
-                    stats.response_time_counter
+                    "{prefix}upstream_response_duration_seconds_bucket{{{labels},le=\"{}\"}} {}\n",
+                    format_le_bound(bound_ms as f64 / 1000.0),
+                    stats.response_buckets[i]
                 ));
             }
+            // +Inf bucket holds every sample, equal to _count.
+            output.push_str(&format!(
+                "{prefix}upstream_response_duration_seconds_bucket{{{labels},le=\"+Inf\"}} {count}\n\
+                 {prefix}upstream_response_duration_seconds_sum{{{labels}}} {:.3}\n\
+                 {prefix}upstream_response_duration_seconds_count{{{labels}}} {count}\n",
+                stats.response_time_total as f64 / 1000.0,
+                count = stats.response_time_counter
+            ));
         }
         output.push('\n');
     }
@@ -264,30 +242,39 @@ mod tests {
 
         let out = PrometheusFormatter::new().format_upstream_stats(&zones, &peer_states);
 
-        // Counter / bytes / response_seconds / server_up.
-        assert!(out.contains("# HELP nginx_vts_upstream_requests_total"));
-        assert!(out.contains("nginx_vts_upstream_requests_total{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 100"));
-        assert!(out.contains("nginx_vts_upstream_requests_total{upstream=\"test_backend\",server=\"10.0.0.2:80\"} 50"));
-        assert!(out.contains("nginx_vts_upstream_bytes_total{upstream=\"test_backend\",server=\"10.0.0.1:80\",direction=\"in\"} 50000"));
-        assert!(out.contains("nginx_vts_upstream_bytes_total{upstream=\"test_backend\",server=\"10.0.0.1:80\",direction=\"out\"} 25000"));
+        // Counters / bytes / times / server_up.
+        assert!(out.contains("# TYPE nginx_vts_upstream_requests_total counter"));
+        assert!(out.contains("nginx_vts_upstream_requests_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\",code=\"2xx\"} 95"));
+        assert!(out.contains("nginx_vts_upstream_requests_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\",code=\"4xx\"} 3"));
+        assert!(out.contains("nginx_vts_upstream_requests_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\",code=\"5xx\"} 2"));
+        assert!(!out.contains(
+            "nginx_vts_upstream_requests_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\"}"
+        ));
+        assert!(out.contains("nginx_vts_upstream_bytes_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\",direction=\"in\"} 50000"));
+        assert!(out.contains("nginx_vts_upstream_bytes_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\",direction=\"out\"} 25000"));
         assert!(out.contains(
-            "nginx_vts_upstream_server_up{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 1"
+            "nginx_vts_upstream_server_up{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 1"
         ));
         assert!(out.contains(
-            "nginx_vts_upstream_server_up{upstream=\"test_backend\",server=\"10.0.0.2:80\"} 0"
+            "nginx_vts_upstream_server_up{upstream=\"test_backend\",backend=\"10.0.0.2:80\"} 0"
         ));
-        assert!(out.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",server=\"10.0.0.1:80\",type=\"request_avg\"} 0.050000"));
-        assert!(out.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",server=\"10.0.0.1:80\",type=\"upstream_avg\"} 0.025000"));
+        assert!(out.contains("nginx_vts_upstream_request_seconds_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 5.000"));
+        assert!(out.contains("nginx_vts_upstream_request_seconds{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 0.050"));
+        assert!(out.contains("nginx_vts_upstream_response_seconds_total{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 2.500"));
+        assert!(out.contains("nginx_vts_upstream_response_seconds{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 0.025"));
+        assert!(out.contains("# TYPE nginx_vts_upstream_request_seconds_total counter"));
+        assert!(out.contains("# TYPE nginx_vts_upstream_request_seconds gauge"));
+        assert!(out.contains("# TYPE nginx_vts_upstream_response_seconds_total counter"));
+        assert!(out.contains("# TYPE nginx_vts_upstream_response_seconds gauge"));
 
         // Histogram.
-        assert!(out.contains("# HELP nginx_vts_upstream_response_duration_seconds Upstream response time distribution"));
         assert!(out.contains("# TYPE nginx_vts_upstream_response_duration_seconds histogram"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"0.005\"} 10"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"0.1\"} 80"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"1\"} 99"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",server=\"10.0.0.1:80\",le=\"+Inf\"} 100"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_sum{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 2.500000"));
-        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_count{upstream=\"test_backend\",server=\"10.0.0.1:80\"} 100"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.005\"} 10"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.1\"} 80"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"1\"} 99"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"+Inf\"} 100"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_sum{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 2.500"));
+        assert!(out.contains("nginx_vts_upstream_response_duration_seconds_count{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 100"));
     }
 
     #[test]
@@ -296,7 +283,7 @@ mod tests {
         let mut zones = HashMap::new();
         zones.insert("test_backend".to_string(), create_test_upstream_zone());
         let out = f.format_upstream_stats(&zones, &Default::default());
-        assert!(out.contains("# HELP custom_vts_upstream_requests_total"));
+        assert!(out.contains("# TYPE custom_vts_upstream_requests_total counter"));
         assert!(out.contains("custom_vts_upstream_requests_total{upstream=\"test_backend\""));
         assert!(!out.contains("nginx_vts_"));
     }
@@ -336,14 +323,14 @@ mod tests {
         for line in series {
             assert!(line.contains(r#"upstream="back\\end""#), "upstream: {line}");
             assert!(
-                line.contains(r#"server="unix:/tmp/a\"b.sock""#),
-                "server: {line}"
+                line.contains(r#"backend="unix:/tmp/a\"b.sock""#),
+                "backend: {line}"
             );
         }
         // And server_up, which comes from the group walk rather than the
         // counters, went through the same escaping.
         assert!(out.contains(
-            r#"nginx_vts_upstream_server_up{upstream="back\\end",server="unix:/tmp/a\"b.sock"} 1"#
+            r#"nginx_vts_upstream_server_up{upstream="back\\end",backend="unix:/tmp/a\"b.sock"} 1"#
         ));
     }
 }

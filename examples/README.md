@@ -81,7 +81,7 @@ rate panels should update.
 - `vts_zone main 1m;` — 1 MB of shared memory for the cross-worker
   counter table.
 - `proxy_cache_path … keys_zone=cache_zone1:1m` — the cache zone whose
-  name becomes the `zone` label in `nginx_vts_cache_requests_total`.
+  name becomes the `cache_zone` label in `nginx_vts_cache_requests_total`.
 - A `127.0.0.1:18091` origin server in the same container so the
   example needs no extra service.
 - `location = /status { vts_status; access_log off; allow all; }` —

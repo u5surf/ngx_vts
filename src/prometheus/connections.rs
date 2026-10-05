@@ -1,4 +1,8 @@
-//! `nginx_vts_connections` and `nginx_vts_connections_total` series.
+//! `nginx_vts_main_connections`, ported from the original module's main
+//! block.  The original declares every state a gauge, `accepted` and
+//! `handled` included, so this does too: a query that
+//! wraps them in `rate()` works either way, and one written against the
+//! original keeps its series.
 
 use super::PrometheusFormatter;
 use crate::stats::VtsConnectionStats;
@@ -6,37 +10,21 @@ use crate::stats::VtsConnectionStats;
 impl PrometheusFormatter {
     /// Format connection statistics into Prometheus metrics.
     pub fn format_connection_stats(&self, connections: &VtsConnectionStats) -> String {
-        let mut output = String::new();
         let prefix = &self.metric_prefix;
-
-        // Current connection states (gauge).
-        output.push_str(&format!(
-            "# HELP {prefix}connections Current nginx connections\n"
-        ));
-        output.push_str(&format!("# TYPE {prefix}connections gauge\n"));
-        for (state, value) in [
-            ("active", connections.active),
-            ("reading", connections.reading),
-            ("writing", connections.writing),
-            ("waiting", connections.waiting),
-        ] {
-            output.push_str(&format!(
-                "{prefix}connections{{state=\"{state}\"}} {value}\n"
-            ));
-        }
-        output.push('\n');
-
-        // Lifetime totals (counter).
-        output.push_str(&format!(
-            "# HELP {prefix}connections_total Total nginx connections\n"
-        ));
-        output.push_str(&format!("# TYPE {prefix}connections_total counter\n"));
-        for (state, value) in [
+        let mut output = format!(
+            "# HELP {prefix}main_connections Nginx connections\n\
+             # TYPE {prefix}main_connections gauge\n"
+        );
+        for (status, value) in [
             ("accepted", connections.accepted),
+            ("active", connections.active),
             ("handled", connections.handled),
+            ("reading", connections.reading),
+            ("waiting", connections.waiting),
+            ("writing", connections.writing),
         ] {
             output.push_str(&format!(
-                "{prefix}connections_total{{state=\"{state}\"}} {value}\n"
+                "{prefix}main_connections{{status=\"{status}\"}} {value}\n"
             ));
         }
         output.push('\n');
@@ -60,11 +48,12 @@ mod tests {
             handled: 999,
         };
         let out = PrometheusFormatter::new().format_connection_stats(&stats);
-        assert!(out.contains("nginx_vts_connections{state=\"active\"} 7"));
-        assert!(out.contains("nginx_vts_connections{state=\"reading\"} 1"));
-        assert!(out.contains("nginx_vts_connections{state=\"writing\"} 2"));
-        assert!(out.contains("nginx_vts_connections{state=\"waiting\"} 4"));
-        assert!(out.contains("nginx_vts_connections_total{state=\"accepted\"} 1000"));
-        assert!(out.contains("nginx_vts_connections_total{state=\"handled\"} 999"));
+        assert!(out.contains("# TYPE nginx_vts_main_connections gauge"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"accepted\"} 1000"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"active\"} 7"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"handled\"} 999"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"reading\"} 1"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"waiting\"} 4"));
+        assert!(out.contains("nginx_vts_main_connections{status=\"writing\"} 2"));
     }
 }

@@ -92,12 +92,12 @@ qr/nginx_vts_main_shm_usage_bytes\{shared="free_size"\} [1-9]\d*/
 [
     qr/\Ahello\z/,
     qr/\Apeer\z/,
-    qr/nginx_vts_main_shm_usage_nodes [2-9]\d*/,
+    qr/nginx_vts_main_shm_usage_bytes\{shared="used_node"\} [2-9]\d*/,
 ]
 
 
 
-=== TEST 6: both families are declared gauges
+=== TEST 6: the family is declared a gauge
 --- http_config
     vts_zone main 1m;
 --- config
@@ -105,4 +105,4 @@ qr/nginx_vts_main_shm_usage_bytes\{shared="free_size"\} [1-9]\d*/
 --- request
 GET /status
 --- response_body_like eval
-qr/# TYPE nginx_vts_main_shm_usage_bytes gauge(.|\n)*# TYPE nginx_vts_main_shm_usage_nodes gauge/
+qr/# TYPE nginx_vts_main_shm_usage_bytes gauge\n/

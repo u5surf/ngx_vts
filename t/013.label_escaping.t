@@ -47,7 +47,7 @@ __DATA__
 [
     qr/\Aok\z/,
     # The backslash is in the response; qr needs it doubled.
-    qr{nginx_vts_server_requests_total\{zone="a\\"b"\} 1},
+    qr{nginx_vts_server_requests_total\{host="a\\"b",code="2xx"\} 1},
 ]
 --- error_code eval
 [200, 200]
@@ -74,7 +74,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Aok\z/,
-    qr{nginx_vts_upstream_requests_total\{upstream="u",server="unix:/tmp/vts-t013-a\\"b\.sock"\} 1},
+    qr{nginx_vts_upstream_requests_total\{upstream="u",backend="unix:/tmp/vts-t013-a\\"b\.sock",code="2xx"\} 1},
 ]
 --- error_code eval
 [200, 200]
@@ -103,7 +103,7 @@ __DATA__
     qr/\Aok\z/,
     # server_up comes from the group walk rather than from the counters, so it
     # is a separate formatting path and needs its own assertion.
-    qr{nginx_vts_upstream_server_up\{upstream="u",server="unix:/tmp/vts-t013-b\\"c\.sock"\} 1},
+    qr{nginx_vts_upstream_server_up\{upstream="u",backend="unix:/tmp/vts-t013-b\\"c\.sock"\} 1},
 ]
 --- error_code eval
 [200, 200]

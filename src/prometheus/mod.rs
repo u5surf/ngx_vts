@@ -2,7 +2,8 @@
 //!
 //! The formatter is split by metric family across submodules:
 //!
-//!   - [`connections`] — `nginx_vts_connections` and `_connections_total`
+//!   - [`connections`] — `nginx_vts_main_connections`
+//!   - [`shm`]         — `nginx_vts_main_shm_usage_bytes`
 //!   - [`server`]      — `nginx_vts_server_*`
 //!   - [`upstream`]    — `nginx_vts_upstream_*` (counters + histogram)
 //!   - [`cache`]       — `nginx_vts_cache_*`
@@ -164,17 +165,7 @@ pub fn generate_vts_status_content(
         content.push_str(&formatter.format_shm_info(&info));
     }
     content.push_str(&formatter.format_server_stats(&server_zone_stats));
-
-    if !upstream_zones.is_empty() {
-        content.push_str(&formatter.format_upstream_stats(upstream_zones, peer_states));
-    } else {
-        // Placeholder for when no upstream zones exist.
-        content.push_str(
-            "# HELP nginx_vts_upstream_zones_total Total number of upstream zones\n\
-             # TYPE nginx_vts_upstream_zones_total gauge\n\
-             nginx_vts_upstream_zones_total 0\n\n",
-        );
-    }
+    content.push_str(&formatter.format_upstream_stats(upstream_zones, peer_states));
 
     // Generate cache metrics — prefer the cross-worker shared table
     // when configured, otherwise fall back to the process-local manager.

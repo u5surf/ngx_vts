@@ -61,7 +61,7 @@ pub struct VtsServerStats {
 }
 
 /// Connection-state snapshot used by the Prometheus
-/// `nginx_vts_connections` series.
+/// `nginx_vts_main_connections` series.
 #[derive(Debug, Clone, Default)]
 pub struct VtsConnectionStats {
     /// Currently active connections.
