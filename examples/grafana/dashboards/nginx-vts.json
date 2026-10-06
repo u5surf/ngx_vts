@@ -37,8 +37,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "nginx_vts_cache_hit_ratio",
-          "legendFormat": "{{zone}}"
+          "expr": "100 * sum by (cache_zone) (rate(nginx_vts_cache_requests_total{status=\"hit\"}[1m])) / sum by (cache_zone) (rate(nginx_vts_cache_requests_total[1m]))",
+          "legendFormat": "{{cache_zone}}"
         }
       ]
     },
@@ -75,7 +75,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Server requests / sec by zone",
+      "title": "Server requests / sec by host",
       "id": 3,
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 6, "w": 12, "h": 7 },
@@ -98,8 +98,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (zone) (rate(nginx_vts_server_requests_total[1m]))",
-          "legendFormat": "{{zone}}"
+          "expr": "sum by (host) (rate(nginx_vts_server_requests_total{host!=\"*\"}[1m]))",
+          "legendFormat": "{{host}}"
         }
       ]
     },
@@ -129,8 +129,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (status) (rate(nginx_vts_server_responses_total[1m]))",
-          "legendFormat": "{{status}}"
+          "expr": "sum by (code) (rate(nginx_vts_server_requests_total{host=\"*\"}[1m]))",
+          "legendFormat": "{{code}}"
         }
       ]
     },
@@ -159,8 +159,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (upstream, server) (rate(nginx_vts_upstream_requests_total[1m]))",
-          "legendFormat": "{{upstream}} -> {{server}}"
+          "expr": "sum by (upstream, backend) (rate(nginx_vts_upstream_requests_total[1m]))",
+          "legendFormat": "{{upstream}} -> {{backend}}"
         }
       ]
     },
@@ -190,8 +190,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (status) (rate(nginx_vts_upstream_responses_total[1m]))",
-          "legendFormat": "{{status}}"
+          "expr": "sum by (code) (rate(nginx_vts_upstream_requests_total[1m]))",
+          "legendFormat": "{{code}}"
         }
       ]
     },
@@ -220,18 +220,18 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
-          "legendFormat": "p50 {{upstream}} -> {{server}}"
+          "expr": "histogram_quantile(0.50, sum by (le, upstream, backend) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p50 {{upstream}} -> {{backend}}"
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.90, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
-          "legendFormat": "p90 {{upstream}} -> {{server}}"
+          "expr": "histogram_quantile(0.90, sum by (le, upstream, backend) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p90 {{upstream}} -> {{backend}}"
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le, upstream, server) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
-          "legendFormat": "p99 {{upstream}} -> {{server}}"
+          "expr": "histogram_quantile(0.99, sum by (le, upstream, backend) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "p99 {{upstream}} -> {{backend}}"
         }
       ]
     },
@@ -260,8 +260,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "nginx_vts_connections",
-          "legendFormat": "{{state}}"
+          "expr": "nginx_vts_main_connections{status=~\"active|reading|writing|waiting\"}",
+          "legendFormat": "{{status}}"
         }
       ]
     }

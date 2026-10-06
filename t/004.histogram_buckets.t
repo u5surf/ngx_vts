@@ -39,7 +39,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Apeer\z/,
-    qr/nginx_vts_upstream_response_duration_seconds_bucket\{upstream="backend",server="127\.0\.0\.1:1985",le="[0-9.]+"\} \d+/,
+    qr/nginx_vts_upstream_response_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="[0-9.]+"\} \d+/,
 ]
 
 

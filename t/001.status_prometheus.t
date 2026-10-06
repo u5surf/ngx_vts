@@ -27,7 +27,7 @@ GET /status
 --- response_headers_like
 Content-Type: text/plain.*
 --- response_body_like eval
-qr/nginx_vts_info\{hostname="[^"]+",version="[^"]+"\} 1/
+qr/nginx_vts_info\{hostname="[^"]+",module_version="[^"]+",version="[^"]+"\} 1/
 
 
 
@@ -59,7 +59,7 @@ GET /status
 --- response_headers_like
 Content-Type: text/plain.*
 --- response_body_like eval
-qr/nginx_vts_connections\{state="active"\} \d+/
+qr/nginx_vts_main_connections\{status="active"\} \d+/
 
 
 
@@ -75,4 +75,4 @@ GET /status
 --- response_headers_like
 Content-Type: text/plain.*
 --- response_body_like eval
-qr/nginx_vts_connections_total\{state="accepted"\} \d+/
+qr/nginx_vts_main_connections\{status="accepted"\} \d+/

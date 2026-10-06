@@ -71,7 +71,7 @@ WORKDIR /build/nginx-src
 # `--with-http_stub_status_module` is what defines `NGX_STAT_STUB`,
 # which in turn populates the `ngx_stat_*` atomics that the Rust
 # side reads for accurate connection-state counters.  Without it
-# the build still works, but `nginx_vts_connections{state="..."}`
+# the build still works, but `nginx_vts_main_connections{status="..."}`
 # falls back to a coarse approximation.
 RUN ./configure \
         --prefix=/etc/nginx \

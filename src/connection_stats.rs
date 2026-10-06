@@ -4,7 +4,7 @@
 //! populated by nginx core when (and only when) `NGX_STAT_STUB` is
 //! defined — i.e. when nginx is built with
 //! `--with-http_stub_status_module`.  When they're available we read
-//! them directly to surface accurate `nginx_vts_connections{state=…}`
+//! them directly to surface accurate `nginx_vts_main_connections{status=…}`
 //! counters; when they aren't, the caller falls back to a
 //! coarser cycle-table walk.
 //!
@@ -30,7 +30,7 @@ use std::sync::OnceLock;
 /// counters.  That's fine for monitoring — the drift between reads is
 /// sub-microsecond.
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)] // `requests` mirrors stub_status's $requests; reserved for a future `_requests_total` metric.
+#[cfg_attr(test, allow(dead_code))] // Read only by the collector, which unit tests stub out.
 pub struct ConnectionStats {
     pub active: u64,
     pub reading: u64,

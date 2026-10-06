@@ -104,21 +104,8 @@ impl VtsStatsManager {
     }
 
     /// Update connection statistics
-    pub fn update_connection_stats(
-        &mut self,
-        active: u64,
-        reading: u64,
-        writing: u64,
-        waiting: u64,
-        accepted: u64,
-        handled: u64,
-    ) {
-        self.connections.active = active;
-        self.connections.reading = reading;
-        self.connections.writing = writing;
-        self.connections.waiting = waiting;
-        self.connections.accepted = accepted;
-        self.connections.handled = handled;
+    pub fn update_connection_stats(&mut self, connections: VtsConnectionStats) {
+        self.connections = connections;
     }
 
     /// Get connection statistics
@@ -218,15 +205,11 @@ mod tests {
         let prometheus_output = formatter.format_upstream_stats(all_upstreams, &Default::default());
 
         // Verify Prometheus output contains expected metrics
-        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.10:80\"} 2"));
-        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",server=\"192.168.1.11:80\"} 1"));
-        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.10:8080\"} 1"));
-        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",server=\"192.168.2.11:8080\"} 1"));
-
-        // Verify status code metrics
-        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"2xx\"} 1"));
-        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"web_backend\",server=\"192.168.1.10:80\",status=\"4xx\"} 1"));
-        assert!(prometheus_output.contains("nginx_vts_upstream_responses_total{upstream=\"api_backend\",server=\"192.168.2.11:8080\",status=\"5xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",backend=\"192.168.1.10:80\",code=\"2xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",backend=\"192.168.1.10:80\",code=\"4xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"web_backend\",backend=\"192.168.1.11:80\",code=\"2xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",backend=\"192.168.2.10:8080\",code=\"2xx\"} 1"));
+        assert!(prometheus_output.contains("nginx_vts_upstream_requests_total{upstream=\"api_backend\",backend=\"192.168.2.11:8080\",code=\"5xx\"} 1"));
     }
 
     #[test]
@@ -273,13 +256,13 @@ mod tests {
         let formatter = PrometheusFormatter::new();
         let prometheus_output = formatter.format_upstream_stats(all_upstreams, &Default::default());
 
-        // Count number of request total metrics
+        // One series per status class for every (upstream, backend) pair.
         let request_metrics_count = prometheus_output
             .matches("nginx_vts_upstream_requests_total{")
             .count();
         assert_eq!(
             request_metrics_count,
-            NUM_UPSTREAMS * NUM_SERVERS_PER_UPSTREAM
+            NUM_UPSTREAMS * NUM_SERVERS_PER_UPSTREAM * 5
         );
     }
 

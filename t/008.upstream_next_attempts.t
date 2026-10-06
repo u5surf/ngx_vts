@@ -51,7 +51,7 @@ __DATA__
 [
     qr/\Abackup\z/,
     qr/\Abackup\z/,
-    qr/nginx_vts_upstream_requests_total\{upstream="backend",server="127\.0\.0\.1:1981"\} 2\b/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1981",code="5xx"\} 2\b/,
 ]
 
 # The series is written whether or not anything was counted, so asserting that
@@ -85,7 +85,7 @@ __DATA__
 [
     qr/\Abackup\z/,
     qr/\Abackup\z/,
-    qr/nginx_vts_upstream_responses_total\{upstream="backend",server="127\.0\.0\.1:1981",status="5xx"\} 2\b/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1981",code="5xx"\} 2\b/,
 ]
 
 
@@ -115,7 +115,7 @@ __DATA__
 [
     qr/\Abackup\z/,
     qr/\Abackup\z/,
-    qr/nginx_vts_upstream_bytes_total\{upstream="backend",server="127\.0\.0\.1:1981",direction="in"\} 0\b/,
+    qr/nginx_vts_upstream_bytes_total\{upstream="backend",backend="127\.0\.0\.1:1981",direction="in"\} 0\b/,
 ]
 
 
@@ -145,7 +145,7 @@ __DATA__
 [
     qr/\Abackup\z/,
     qr/\Abackup\z/,
-    qr/nginx_vts_upstream_responses_total\{upstream="backend",server="127\.0\.0\.1:1985",status="2xx"\} 2\b/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1985",code="2xx"\} 2\b/,
 ]
 
 
@@ -171,5 +171,5 @@ __DATA__
 [
     qr/\Aonly\z/,
     qr/\Aonly\z/,
-    qr/nginx_vts_upstream_requests_total\{upstream="backend",server="127\.0\.0\.1:1985"\} 2\b/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1985",code="2xx"\} 2\b/,
 ]

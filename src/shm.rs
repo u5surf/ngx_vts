@@ -393,11 +393,11 @@ static VTS_ZONE_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 /// What the shared zone is holding.
 ///
-/// `used_size` is deliberately absent. The original module sums the sizes of
-/// its nodes, which is not what the zone has spent: the slab hands out a whole
+/// There is no `used_size` field. The original module sums the sizes of its
+/// nodes, which is not what the zone has spent: the slab hands out a whole
 /// page or a whole slot per node, so that figure can read well below the
-/// maximum while the zone is already refusing inserts. `free_size` is what
-/// actually answers "does another node fit", so that is what is reported.
+/// maximum while the zone is already refusing inserts. The formatter reports
+/// `max_size - free_size` under that label instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShmInfo {
     /// The configured size of the zone.

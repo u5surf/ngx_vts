@@ -38,7 +38,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Aok\z/,
-    qr/nginx_vts_upstream_server_up\{upstream="backend",server="127\.0\.0\.1:1981"\} 0/,
+    qr/nginx_vts_upstream_server_up\{upstream="backend",backend="127\.0\.0\.1:1981"\} 0/,
 ]
 
 
@@ -61,7 +61,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Aok\z/,
-    qr/nginx_vts_upstream_server_up\{upstream="backend",server="127\.0\.0\.1:1985"\} 1/,
+    qr/nginx_vts_upstream_server_up\{upstream="backend",backend="127\.0\.0\.1:1985"\} 1/,
 ]
 
 
@@ -88,7 +88,7 @@ __DATA__
 [
     qr/\Aok\z/,
     qr/\Aok\z/,
-    qr/nginx_vts_upstream_server_up\{upstream="backend",server="127\.0\.0\.1:1981"\} 0/,
+    qr/nginx_vts_upstream_server_up\{upstream="backend",backend="127\.0\.0\.1:1981"\} 0/,
 ]
 
 
@@ -118,7 +118,7 @@ __DATA__
 [
     qr/\Aok\z/,
     qr/\Aok\z/,
-    qr/nginx_vts_upstream_server_up\{upstream="backend",server="127\.0\.0\.1:1981"\} 1/,
+    qr/nginx_vts_upstream_server_up\{upstream="backend",backend="127\.0\.0\.1:1981"\} 1/,
 ]
 
 
@@ -144,5 +144,5 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Aok\z/,
-    qr/nginx_vts_upstream_server_up\{upstream="backend",server="127\.0\.0\.1:1986"\} 0/,
+    qr/nginx_vts_upstream_server_up\{upstream="backend",backend="127\.0\.0\.1:1986"\} 0/,
 ]

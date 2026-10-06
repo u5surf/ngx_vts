@@ -197,7 +197,7 @@ fn record_upstream_and_cache(r: &ngx_http_request_t, request_time: u64) {
 /// memory zone declared by `proxy_cache_path ... keys_zone=NAME:SIZE`.
 ///
 /// We also forward `max_size` and the current `used_size` so
-/// `nginx_vts_cache_size_bytes{type="max"}` / `{type="used"}` reflect
+/// `nginx_vts_cache_usage_bytes{cache_size="max"}` / `{cache_size="used"}` reflect
 /// reality.  Note that both `fc->max_size` and `fc->sh->size` are kept
 /// in **cache blocks** by nginx internally (the file cache manager
 /// divides `max_size` by `bsize` during init for direct comparison

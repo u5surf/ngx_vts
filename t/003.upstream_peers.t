@@ -34,7 +34,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Apeer\z/,
-    qr/nginx_vts_upstream_requests_total\{upstream="backend",server="127\.0\.0\.1:1985"\} [1-9]\d*/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1985",code="2xx"\} [1-9]\d*/,
 ]
 
 
@@ -59,7 +59,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Apeer\z/,
-    qr/nginx_vts_upstream_bytes_total\{upstream="backend",server="127\.0\.0\.1:1985",direction="in"\} [1-9]\d*/,
+    qr/nginx_vts_upstream_bytes_total\{upstream="backend",backend="127\.0\.0\.1:1985",direction="in"\} [1-9]\d*/,
 ]
 
 
@@ -90,7 +90,7 @@ __DATA__
 [
     qr/\A[ab]\z/,
     qr/\A[ab]\z/,
-    qr/server="127\.0\.0\.1:1985".*\n(.*\n)*.*server="127\.0\.0\.1:1986"/,
+    qr/backend="127\.0\.0\.1:1985".*\n(.*\n)*.*backend="127\.0\.0\.1:1986"/,
 ]
 
 
@@ -117,5 +117,5 @@ __DATA__
 --- response_body_like eval
 [
     qr/unavailable/,
-    qr/nginx_vts_upstream_responses_total\{upstream="backend",server="127\.0\.0\.1:1985",status="5xx"\} [1-9]\d*/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1985",code="5xx"\} [1-9]\d*/,
 ]

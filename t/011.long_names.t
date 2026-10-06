@@ -47,7 +47,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Abackend:OK\z/,
-    qr{nginx_vts_upstream_requests_total\{upstream="u",server="unix:/tmp/vts-t011-a-deliberately-long-unix-domain-socket-path-for-the-key\.sock"\} [1-9]\d*},
+    qr{nginx_vts_upstream_requests_total\{upstream="u",backend="unix:/tmp/vts-t011-a-deliberately-long-unix-domain-socket-path-for-the-key\.sock",code="2xx"\} [1-9]\d*},
 ]
 
 
@@ -72,7 +72,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.example"\} [1-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.example",code="2xx"\} [1-9]\d*/,
 ]
 
 
@@ -101,7 +101,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="_"\} [1-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="_",code="2xx"\} [1-9]\d*/,
 ]
 
 
@@ -126,6 +126,6 @@ __DATA__
 --- response_body_unlike eval
 [
     qr/this pattern is never in the body/,
-    qr/zone="o{20}/,
+    qr/host="o{20}/,
 ]
 

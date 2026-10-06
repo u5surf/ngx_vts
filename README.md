@@ -80,9 +80,13 @@ model without nginx.
 - **Server-zone metrics** keyed by the matched server block's first
   `server_name` (not the raw `Host` header), so the table can't be
   blown up by adversarial Host values.
-- **Upstream metrics** per `(upstream, server)` peer — request counts,
-  bytes in/out, status-code class buckets, request and upstream
-  response times.
+- **Metric names compatible with nginx-module-vts** — the Prometheus
+  families, label names and label values follow the original module's
+  output, so dashboards and alerts written against it keep working. See
+  [Compatibility with nginx-module-vts](#compatibility-with-nginx-module-vts)
+  for what still differs.
+- **Upstream metrics** per `(upstream, backend)` peer — status-code class
+  counters, bytes in/out, request and upstream response times.
 - **Per-attempt upstream tracking** — `r->upstream_states` is iterated
   so each retry attempt (e.g. `502` from peer A followed by `200`
   from peer B) contributes its own sample to the upstream counters,
@@ -97,17 +101,17 @@ model without nginx.
 - **Cache hit/miss metrics** per cache zone (`proxy_cache_path
   keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
-  workers, exposed as `nginx_vts_cache_requests_total` plus
-  `nginx_vts_cache_hit_ratio`.
+  workers, exposed as `nginx_vts_cache_requests_total`.
 - **Cache size gauges** per cache zone — `proxy_cache_path max_size=…`
   and current on-disk usage (`sh->size × bsize`) exposed as
-  `nginx_vts_cache_size_bytes{type="max"}` and `{type="used"}`.
-- **Shared zone accounting** — `nginx_vts_main_shm_usage_bytes{shared="max_size"}`
-  and `{shared="free_size"}` plus `nginx_vts_main_shm_usage_nodes`, so a full
-  zone can be told from an idle one. `free_size` comes from the slab's own
-  page count rather than the sum of node sizes, because the slab spends a
-  whole page or slot per node and the latter reads low right up to the point
-  where inserts start failing.
+  `nginx_vts_cache_usage_bytes{cache_size="max"}` and `{cache_size="used"}`.
+- **Shared zone accounting** — `nginx_vts_main_shm_usage_bytes` with
+  `shared="max_size"`, `"used_size"`, `"used_node"` and `"free_size"`, so a
+  full zone can be told from an idle one. `free_size` comes from the slab's
+  own page count and `used_size` is the rest of the zone, rather than the sum
+  of node sizes the original reports, because the slab spends a whole page or
+  slot per node and that sum reads low right up to the point where inserts
+  start failing.
 - **Accurate connection counters** via the global `ngx_stat_*` atomics
   when nginx is built with `--with-http_stub_status_module`;
   `reading`/`writing`/`waiting` match what `stub_status` would
@@ -212,60 +216,92 @@ $ curl -sS http://127.0.0.1:18080/status
 
 ### Sample output (verbatim, after 105 proxied requests across 2 workers)
 
+Trimmed where marked `…`.
+
 ```
-# nginx-vts-rust
-# Version: 0.1.0
-# Hostname: …
-# Current Time: 1779530713
-
-# VTS Status: Active
-# Module: nginx-vts-rust
-
 # Prometheus Metrics:
-# HELP nginx_vts_info Nginx VTS module information
+# HELP nginx_vts_info Nginx info
 # TYPE nginx_vts_info gauge
-nginx_vts_info{hostname="…",version="0.1.0"} 1
+nginx_vts_info{hostname="…",module_version="0.1.0",version="1.31.6"} 1
 
-# HELP nginx_vts_connections Current nginx connections
-# TYPE nginx_vts_connections gauge
-nginx_vts_connections{state="active"} 8
-nginx_vts_connections{state="reading"} 3
-nginx_vts_connections{state="writing"} 3
-nginx_vts_connections{state="waiting"} 2
-
-# HELP nginx_vts_server_requests_total Total number of requests
-# TYPE nginx_vts_server_requests_total counter
-nginx_vts_server_requests_total{zone="example.test"} 105
-
-# HELP nginx_vts_server_bytes_total Total bytes transferred
-# TYPE nginx_vts_server_bytes_total counter
-nginx_vts_server_bytes_total{zone="example.test",direction="in"}  8190
-nginx_vts_server_bytes_total{zone="example.test",direction="out"} 16065
-
-# HELP nginx_vts_server_responses_total Total responses by status code
-# TYPE nginx_vts_server_responses_total counter
-nginx_vts_server_responses_total{zone="example.test",status="2xx"} 105
+# HELP nginx_vts_start_time_seconds Nginx start time
+# TYPE nginx_vts_start_time_seconds gauge
+nginx_vts_start_time_seconds 1791080808
 …
 
-# HELP nginx_vts_upstream_requests_total Total upstream requests
-# TYPE nginx_vts_upstream_requests_total counter
-nginx_vts_upstream_requests_total{upstream="backend",server="127.0.0.1:18091"} 53
-nginx_vts_upstream_requests_total{upstream="backend",server="127.0.0.1:18092"} 52
+# HELP nginx_vts_main_connections Nginx connections
+# TYPE nginx_vts_main_connections gauge
+nginx_vts_main_connections{status="accepted"} 10
+nginx_vts_main_connections{status="active"} 10
+…
 
-# HELP nginx_vts_upstream_responses_total Upstream responses by status code
-# TYPE nginx_vts_upstream_responses_total counter
-nginx_vts_upstream_responses_total{upstream="backend",server="127.0.0.1:18091",status="2xx"} 53
-nginx_vts_upstream_responses_total{upstream="backend",server="127.0.0.1:18092",status="2xx"} 52
+# HELP nginx_vts_main_shm_usage_bytes Shared memory zone usage
+# TYPE nginx_vts_main_shm_usage_bytes gauge
+nginx_vts_main_shm_usage_bytes{shared="max_size"} 1048576
+nginx_vts_main_shm_usage_bytes{shared="used_size"} 98304
+nginx_vts_main_shm_usage_bytes{shared="used_node"} 4
+nginx_vts_main_shm_usage_bytes{shared="free_size"} 950272
+
+# HELP nginx_vts_server_bytes_total The request/response bytes
+# TYPE nginx_vts_server_bytes_total counter
+nginx_vts_server_bytes_total{host="example.test",direction="in"} 8190
+nginx_vts_server_bytes_total{host="example.test",direction="out"} 16065
+…
+
+# HELP nginx_vts_server_requests_total The requests counter
+# TYPE nginx_vts_server_requests_total counter
+nginx_vts_server_requests_total{host="example.test",code="2xx"} 105
+…
+nginx_vts_server_requests_total{host="_",code="2xx"} 105
+…
+nginx_vts_server_requests_total{host="*",code="2xx"} 210
+…
+
+# HELP nginx_vts_upstream_requests_total The upstream requests counter
+# TYPE nginx_vts_upstream_requests_total counter
+nginx_vts_upstream_requests_total{upstream="backend",backend="127.0.0.1:18091",code="2xx"} 53
+…
+nginx_vts_upstream_requests_total{upstream="backend",backend="127.0.0.1:18092",code="2xx"} 52
+…
 
 # HELP nginx_vts_upstream_server_up Upstream server status (1=up, 0=down)
 # TYPE nginx_vts_upstream_server_up gauge
-nginx_vts_upstream_server_up{upstream="backend",server="127.0.0.1:18091"} 1
-nginx_vts_upstream_server_up{upstream="backend",server="127.0.0.1:18092"} 1
+nginx_vts_upstream_server_up{upstream="backend",backend="127.0.0.1:18091"} 1
+nginx_vts_upstream_server_up{upstream="backend",backend="127.0.0.1:18092"} 1
 ```
 
 Note that `peer1 (53) + peer2 (52) = 105`: both workers feed the same
 table, so `/status` shows the totals regardless of which worker
-happened to handle the request.
+happened to handle the request. `host="_"` is the two peer servers,
+which have no `server_name` and live in the same nginx here, so the
+`host="*"` row that sums every zone counts each request twice.
+
+## Compatibility with nginx-module-vts
+
+The Prometheus output uses the original module's metric names, label
+names (`host`, `code`, `upstream`, `backend`, `cache_zone`, …) and
+label values, including the `host="*"` row that sums every server
+zone. What still differs:
+
+- **Additions** — `process_start_time_seconds` (see
+  [Persistence](#persistence)) and `nginx_vts_upstream_server_up`.
+- **Values** — `used_size` is what the slab has spent, not the sum of
+  node sizes. `nginx_vts_start_time_seconds` is when the counters
+  started from zero, which a reload does not change. The
+  `*_request_seconds` and `*_response_seconds` averages are cumulative
+  (`sum / count`), not the original's moving average.
+- **Histograms** — `nginx_vts_server_request_duration_seconds` and
+  `nginx_vts_upstream_response_duration_seconds` are always emitted,
+  with fixed buckets, and `le` is written `1` rather than `1.000`.
+  The original emits them only when `histogram_buckets` is set.
+- **Not emitted yet** — `nginx_vts_server_cache_total`,
+  `nginx_vts_cache_bytes_total`,
+  `nginx_vts_upstream_request_duration_seconds`,
+  `nginx_vts_status_code_requests_total` and the `nginx_vts_filter_*`
+  families.
+- **Upstreams without a group** — a `proxy_pass` straight to an
+  address is reported under its own name rather than the original's
+  `upstream="::nogroups"`.
 
 ## Directives
 
@@ -313,18 +349,21 @@ All `*_total` metrics are Prometheus counters, so query them with
 loses is only the increment since the last scrape.
 
 When a zone is configured, `/status` also reports when the counters
-last started from zero:
+last started from zero, under the original module's name and under the
+name other collectors look for:
 
 ```
+# TYPE nginx_vts_start_time_seconds gauge
+nginx_vts_start_time_seconds 1791039391
 # TYPE process_start_time_seconds gauge
 process_start_time_seconds 1791039391
 ```
 
 It is the time the zone was built, not the time a process started, so
 it stays put across a reload and moves forward exactly when the
-counters reset. It is unprefixed because that is the name other
-collectors look for to tell a reset from a series they have only just
-started watching.
+counters reset. `process_start_time_seconds` is unprefixed because
+that is the name other collectors look for to tell a reset from a
+series they have only just started watching.
 
 **OpenTelemetry Collector** — scrape `/status` with the `prometheus`
 receiver and let the `metric_start_time` processor take the start time
@@ -411,6 +450,8 @@ The list below tracks known gaps relative to the original
   cannot rate-limit responses.
 
 ### Metric coverage
+- Some of the original's families are not emitted yet; see
+  [Compatibility with nginx-module-vts](#compatibility-with-nginx-module-vts).
 - Upstream peer state (`down`, `weight`, `max_fails`,
   `fail_timeout`, `backup`) is not yet read from the nginx upstream
   configuration.

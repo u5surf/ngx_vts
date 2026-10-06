@@ -31,7 +31,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Ahello\z/,
-    qr/nginx_vts_server_requests_total\{zone="localhost"\} [1-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="2xx"\} [1-9]\d*/,
 ]
 
 
@@ -51,7 +51,7 @@ __DATA__
 [
     qr/\Aok\z/,
     qr/nope/,
-    qr/nginx_vts_server_responses_total\{zone="localhost",status="4xx"\} [1-9]\d*/,
+    qr/nginx_vts_server_requests_total\{host="localhost",code="4xx"\} [1-9]\d*/,
 ]
 
 
@@ -67,7 +67,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\A0123456789\z/,
-    qr/nginx_vts_server_bytes_total\{zone="localhost",direction="out"\} [1-9]\d*/,
+    qr/nginx_vts_server_bytes_total\{host="localhost",direction="out"\} [1-9]\d*/,
 ]
 
 
@@ -85,5 +85,5 @@ __DATA__
 --- response_body_unlike eval
 [
     qr/this pattern is never in the body/,
-    qr/zone="not-configured\.invalid"/,
+    qr/host="not-configured\.invalid"/,
 ]

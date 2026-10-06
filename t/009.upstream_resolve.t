@@ -125,7 +125,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\AOK\z/,
-    qr/nginx_vts_upstream_requests_total\{upstream="backend",server="127\.0\.0\.1:1984"\} [1-9]\d*/,
+    qr/nginx_vts_upstream_requests_total\{upstream="backend",backend="127\.0\.0\.1:1984",code="2xx"\} [1-9]\d*/,
 ]
 
 
@@ -164,5 +164,5 @@ __DATA__
     qr//,
     qr//,
     qr//,
-    qr/(?=.*server="127\.0\.0\.2:1984")(?=.*server="127\.0\.0\.1:1984"\} [1-9]\d*)/s,
+    qr/(?=.*backend="127\.0\.0\.2:1984")(?=.*backend="127\.0\.0\.1:1984"\} [1-9]\d*)/s,
 ]

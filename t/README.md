@@ -35,7 +35,7 @@ cpanm --notest Test::Nginx
 | `004.histogram_buckets.t` | `023.histogram_buckets.t` | `_bucket{le=…}`, `+Inf`, `_sum`, `_count`, and the `histogram` type declaration |
 | `005.cache_zones.t` | the cache half of `002.check_json_syntax.t` | MISS then HIT per cache zone, the full set of cache statuses, `max` and `used` size gauges, two zones counted apart |
 | `006.counter_accumulation.t` | the non-dump half of `042.dump.t` | counters keep running totals across requests rather than reporting the last one |
-| `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has left, and how many entries it holds |
+| `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has spent and has left (which add up to the zone), and how many entries it holds |
 | `008.upstream_next_attempts.t` | `045.upstream_next_attempts.t` | a request that `proxy_next_upstream` passed on is counted against the peer it was passed on from, with that attempt's own status and no bytes |
 | `009.upstream_resolve.t` | `028.upstream_resolve.t` | peers resolved at run time are counted, and a peer replaced by a re-resolve keeps its numbers |
 | `010.upstream_backup_resolve.t` | `040.upstream_backup_resolve.t`, `041.upstream_backup_gone.t` | a backup peer the resolver made is counted against its address, and keeps its numbers when a re-resolve takes it out |
