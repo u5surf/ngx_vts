@@ -61,13 +61,17 @@ fi
 
 echo "load.sh: hitting $TARGET at ~${RATE} req/s (Ctrl-C to stop)"
 
-trap 'echo; echo "load.sh: stopped after $count requests"; exit 0' INT TERM
+# The /slow requests run in the background. Stopping early (Ctrl-C,
+# TERM) ends them with the script; reaching -d waits for them instead,
+# so the last samples are recorded before the script reports it is done.
+trap 'echo; kill $(jobs -p) 2>/dev/null; wait; echo "load.sh: stopped after $count requests"; exit 0' INT TERM
 
 VHOSTS=(app1.example.test app2.example.test api.example.test static.example.test)
 
 count=0
 while true; do
     if [ "$deadline" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        wait
         echo "load.sh: duration reached, stopping after $count requests"
         exit 0
     fi
