@@ -4,7 +4,7 @@ A self-contained docker compose stack that builds `nginx` with the
 `ngx_vts_rust` module, scrapes `/status` from Prometheus, and renders
 the metrics in a pre-provisioned Grafana dashboard.
 
-![Grafana dashboard rendering cache hit ratio, request rates by zone and status, upstream request distribution, and connection counts](grafana/dashboard.png)
+![Grafana dashboard rendering cache hit ratio, request rates by zone and status, upstream request distribution, connection counts, and upstream request and response time percentiles](grafana/dashboard.png)
 
 ## Layout
 
@@ -70,11 +70,21 @@ for i in $(seq 1 50); do curl -s http://localhost:18080/foo > /dev/null; done
 for i in $(seq 1 10); do
   curl -s -H "X-Bypass: 1" http://localhost:18080/bypass/ > /dev/null
 done
+
+# A slow client: the upstream answers at once, the reply takes ~2 s.
+curl -s http://localhost:18080/slow > /dev/null
 ```
 
 Then refresh the Grafana panel — the cache hit ratio gauge, the
 stacked `cache_requests_total` chart, and the server/upstream request
 rate panels should update.
+
+The bottom row compares the two upstream histograms.
+`nginx_vts_upstream_request_duration_seconds` is the whole request as
+the client saw it, `nginx_vts_upstream_response_duration_seconds` only
+the upstream's part. The `/slow` requests that `load.sh` sends open a
+gap between them in the "request vs response p99" panel: the upstream
+stays fast, the clients do not.
 
 ## What's inside nginx.conf
 
@@ -84,6 +94,9 @@ rate panels should update.
   name becomes the `cache_zone` label in `nginx_vts_cache_requests_total`.
 - A `127.0.0.1:18091` origin server in the same container so the
   example needs no extra service.
+- `location = /slow { … limit_rate 8k; }` — a 16 KB reply from the
+  origin, sent to the client at 8 KB/s. It is what separates the
+  upstream request and response time histograms.
 - `location = /status { vts_status; access_log off; allow all; }` —
   Prometheus scrape target.  `access_log off` keeps the scrape out
   of the access log, and the LOG_PHASE handler also excludes /status

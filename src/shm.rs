@@ -168,6 +168,8 @@ pub struct UpstreamCounters {
     pub response_time_counter: u64,
     /// See [`UpstreamServerStats::response_buckets`].
     pub response_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
+    /// See [`UpstreamServerStats::request_buckets`].
+    pub request_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 }
 
 impl UpstreamCounters {
@@ -186,6 +188,7 @@ impl UpstreamCounters {
             response_time_total: 0,
             response_time_counter: 0,
             response_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
+            request_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
         }
     }
 
@@ -208,6 +211,7 @@ impl UpstreamCounters {
         stats.response_time_total = self.response_time_total;
         stats.response_time_counter = self.response_time_counter;
         stats.response_buckets = self.response_buckets;
+        stats.request_buckets = self.request_buckets;
         stats
     }
 
@@ -225,6 +229,13 @@ impl UpstreamCounters {
         if request_time > 0 {
             self.request_time_total += request_time;
             self.request_time_counter += 1;
+        }
+        // Unlike the average above, the histogram counts a 0 ms request
+        // time too, so its `+Inf` bucket matches `request_counter`.
+        for (i, &bound) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+            if request_time <= bound {
+                self.request_buckets[i] += 1;
+            }
         }
         // `upstream_response_time == 0` is a legitimate sub-millisecond
         // sample (common on loopback / colocated upstreams), not a
@@ -947,6 +958,27 @@ mod tests {
         assert_eq!(c.response_buckets[2], 2); // le=25   → still two
         assert_eq!(c.response_buckets[3], 3); // le=50   → +30ms
         assert_eq!(c.response_buckets[10], 3); // le=10000
+    }
+
+    #[test]
+    fn upstream_counters_request_buckets_track_distribution() {
+        let mut c = UpstreamCounters::new();
+        // Same samples as the response-side test below, plus a 0 ms one:
+        // the average skips it, but the histogram has to count it so that
+        // its +Inf bucket matches `request_counter`.
+        for sample in [0u64, 3, 7, 30, 75, 600, 50_000] {
+            c.update(sample, 0, 0, 0, 200);
+        }
+
+        assert_eq!(c.request_counter, 7);
+        assert_eq!(c.request_time_counter, 6); // the average skips 0 ms
+        assert_eq!(c.request_buckets[0], 2); // le=5    → {0,3}
+        assert_eq!(c.request_buckets[1], 3); // le=10   → {0,3,7}
+        assert_eq!(c.request_buckets[3], 4); // le=50   → +30
+        assert_eq!(c.request_buckets[4], 5); // le=100  → +75
+        assert_eq!(c.request_buckets[7], 6); // le=1000 → +600
+        assert_eq!(c.request_buckets[10], 6); // le=10000; 50_000 only in +Inf
+        assert_eq!(c.into_stats("s").request_buckets, c.request_buckets);
     }
 
     #[test]

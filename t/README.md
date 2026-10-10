@@ -32,7 +32,7 @@ cpanm --notest Test::Nginx
 | `001.status_prometheus.t` | `022.display_prometheus.t` | `/status` serves Prometheus text; `HELP`/`TYPE` on every family |
 | `002.server_zones.t` | `001.display_json.t`, `030.display_html_uri.t` | request, byte and status-class counters per server zone; an unknown `Host` does not create a zone |
 | `003.upstream_peers.t` | `024.upstream_check.t`, `027.upstream_zone_peers.t` | per-peer request, byte and status-class counters; every peer of a group gets its own series |
-| `004.histogram_buckets.t` | `023.histogram_buckets.t` | `_bucket{le=…}`, `+Inf`, `_sum`, `_count`, and the `histogram` type declaration |
+| `004.histogram_buckets.t` | `023.histogram_buckets.t` | `_bucket{le=…}`, `+Inf`, `_sum`, `_count`, and the `histogram` type declaration; the upstream request histogram includes sending the response, the response histogram does not |
 | `005.cache_zones.t` | the cache half of `002.check_json_syntax.t` | MISS then HIT per cache zone, the full set of cache statuses, `max` and `used` size gauges, two zones counted apart |
 | `006.counter_accumulation.t` | the non-dump half of `042.dump.t` | counters keep running totals across requests rather than reporting the last one |
 | `007.shm_usage.t` | `033.shm_free_size.t` | the zone reports its configured size, what the slab has spent and has left (which add up to the zone), and how many entries it holds |
