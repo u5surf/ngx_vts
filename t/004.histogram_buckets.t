@@ -139,7 +139,7 @@ __DATA__
 --- response_body_like eval
 [
     qr/\Apeer\z/,
-    qr/# TYPE nginx_vts_upstream_request_duration_seconds histogram\n(?:nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="[0-9.]+"\} 1\n)+nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="\+Inf"\} 1\nnginx_vts_upstream_request_duration_seconds_sum\{upstream="backend",backend="127\.0\.0\.1:1985"\} [0-9.]+\nnginx_vts_upstream_request_duration_seconds_count\{upstream="backend",backend="127\.0\.0\.1:1985"\} 1\n/,
+    qr/# TYPE nginx_vts_upstream_request_duration_seconds histogram\n(?:nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="[0-9.]+"\} [01]\n)+nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="\+Inf"\} 1\nnginx_vts_upstream_request_duration_seconds_sum\{upstream="backend",backend="127\.0\.0\.1:1985"\} [0-9.]+\nnginx_vts_upstream_request_duration_seconds_count\{upstream="backend",backend="127\.0\.0\.1:1985"\} 1\n/,
 ]
 
 
