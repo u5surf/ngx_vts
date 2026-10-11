@@ -128,6 +128,10 @@ fn record_server_zone(r: &ngx_http_request_t, request_time: u64) {
     let bytes_out = unsafe { r.connection.as_ref() }.map_or(0, |c| to_u64(c.sent));
 
     crate::track_server_request(server_zone, status, bytes_in, bytes_out, request_time);
+
+    if let Some(slot) = crate::module::measure_status_codes(r).slot(status) {
+        crate::track_status_code(server_zone, slot);
+    }
 }
 
 /// Upstream and cache updates, performed only when the request went

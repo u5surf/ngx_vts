@@ -1,8 +1,9 @@
 //! Shared-memory backing store for VTS counters.
 //!
-//! The aggregation state is two `RbTreeMap`s — one keyed by `server_name`,
-//! one keyed by `"upstream\0server"` — allocated inside the nginx slab
-//! pool attached to the `vts_zone` directive.  Capacity scales with the
+//! The aggregation state is a handful of `RbTreeMap`s — keyed by
+//! `server_name`, by `"upstream\0server"`, by cache zone and by
+//! `"server\0status code"` — allocated inside the nginx slab pool attached
+//! to the `vts_zone` directive.  Capacity scales with the
 //! configured zone size: a larger `vts_zone` holds proportionally more
 //! distinct keys.
 //!
@@ -29,6 +30,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::cache_stats::{CacheZoneStats, VtsCacheStats};
 use crate::stats::{VtsRequestTimes, VtsResponseStats, VtsServerStats};
+use crate::status_codes::StatusCodeSlot;
 use crate::upstream_stats::{
     UpstreamServerStats, UpstreamZone, VtsResponseStats as UpstreamResp,
     RESPONSE_TIME_BUCKET_BOUNDS_MS, RESPONSE_TIME_BUCKET_COUNT,
@@ -117,6 +119,7 @@ impl ServerCounters {
                 avg,
             },
             request_buckets: self.request_buckets,
+            status_codes: Default::default(),
         }
     }
 
@@ -367,12 +370,19 @@ pub type UpstreamMap<A> = RbTreeMap<NgxString<A>, UpstreamCounters, A>;
 /// `RbTreeMap` keyed by cache-zone name, stored in the slab pool.
 pub type CacheMap<A> = RbTreeMap<NgxString<A>, CacheCounters, A>;
 
+/// `RbTreeMap` keyed by `"server\0code"`, where `code` is the label of a
+/// [`StatusCodeSlot`], stored in the slab pool.  Only filled when
+/// `vts_measure_status_codes` is set, and only with codes that occurred,
+/// so it costs nothing when the directive is absent.
+pub type StatusCodeMap<A> = RbTreeMap<NgxString<A>, u64, A>;
+
 /// Root of the shared-memory state, allocated once from the slab pool.
 #[cfg_attr(test, allow(dead_code))]
 pub struct VtsShared {
     pub servers: RwLock<ServerMap<SlabPool>>,
     pub upstreams: RwLock<UpstreamMap<SlabPool>>,
     pub caches: RwLock<CacheMap<SlabPool>>,
+    pub status_codes: RwLock<StatusCodeMap<SlabPool>>,
     /// When the counters started from zero, in seconds since the epoch.
     /// Set once when the zone is built, so it survives a reload that
     /// reuses the zone and moves forward whenever the counters reset.
@@ -415,7 +425,8 @@ pub struct ShmInfo {
     pub max_size: u64,
     /// What the slab has left, as whole free pages.
     pub free_size: u64,
-    /// Entries currently held across the server, upstream and cache maps.
+    /// Entries currently held across the server, upstream, cache and
+    /// status code maps.
     pub used_node: u64,
 }
 
@@ -436,7 +447,8 @@ pub fn shm_info() -> Option<ShmInfo> {
     let shared = shared()?;
     let used_node = shared.servers.read().iter().count()
         + shared.upstreams.read().iter().count()
-        + shared.caches.read().iter().count();
+        + shared.caches.read().iter().count()
+        + shared.status_codes.read().iter().count();
 
     Some(ShmInfo {
         max_size: VTS_ZONE_SIZE.load(Ordering::Acquire) as u64,
@@ -524,6 +536,39 @@ pub fn record_server(
     _bytes_out: u64,
     _request_time: u64,
 ) -> bool {
+    false
+}
+
+/// Count one request against a status code of its server zone.  See
+/// [`record_server`] for the return-value contract.
+#[cfg(not(test))]
+pub fn record_status_code(name: &str, slot: StatusCodeSlot) -> bool {
+    let Some(shared) = shared() else {
+        return false;
+    };
+    if name.is_empty() || name.len() > VTS_MAX_KEY_BYTES {
+        return true;
+    }
+
+    let composite = upstream_key_bytes(name, &slot.label());
+    let mut guard = shared.status_codes.write();
+
+    if let Some(count) = guard.get_mut(composite.as_slice()) {
+        *count += 1;
+        return true;
+    }
+
+    let alloc = guard.allocator().clone();
+    let Ok(key) = NgxString::try_from_bytes_in(&composite, alloc) else {
+        return true;
+    };
+    let _ = guard.try_insert(key, 1);
+    true
+}
+
+/// Test-only stub.  See [`record_server`].
+#[cfg(test)]
+pub fn record_status_code(_name: &str, _slot: StatusCodeSlot) -> bool {
     false
 }
 
@@ -651,6 +696,33 @@ where
     out
 }
 
+/// Attach the per-code counts to the zones `build_server_snapshot` built,
+/// from any iterator of `("server\0code" bytes, count)` pairs.  A count
+/// whose zone is missing (its insert failed for lack of room) is dropped
+/// rather than reported against a zone with no requests.
+fn merge_status_code_snapshot<'a, I>(servers: &mut HashMap<String, VtsServerStats>, entries: I)
+where
+    I: IntoIterator<Item = (&'a [u8], u64)>,
+{
+    for (key_bytes, count) in entries {
+        let Some((server_bytes, label_bytes)) = split_upstream_key(key_bytes) else {
+            continue;
+        };
+        let (Ok(server), Ok(label)) = (
+            std::str::from_utf8(server_bytes),
+            std::str::from_utf8(label_bytes),
+        ) else {
+            continue;
+        };
+        let (Some(stats), Some(slot)) =
+            (servers.get_mut(server), StatusCodeSlot::from_label(label))
+        else {
+            continue;
+        };
+        stats.status_codes.insert(slot, count);
+    }
+}
+
 /// Build the Prometheus-side upstream map from any iterator of
 /// `(composite_key_bytes, counters)` pairs.  See [`build_server_snapshot`].
 fn build_upstream_snapshot<'a, I>(entries: I) -> HashMap<String, UpstreamZone>
@@ -697,10 +769,13 @@ where
 #[cfg(not(test))]
 pub fn snapshot_servers() -> Option<HashMap<String, VtsServerStats>> {
     let shared = shared()?;
-    let guard = shared.servers.read();
-    Some(build_server_snapshot(
-        guard.iter().map(|(k, v)| (k.as_bytes(), v)),
-    ))
+    let mut servers = {
+        let guard = shared.servers.read();
+        build_server_snapshot(guard.iter().map(|(k, v)| (k.as_bytes(), v)))
+    };
+    let guard = shared.status_codes.read();
+    merge_status_code_snapshot(&mut servers, guard.iter().map(|(k, v)| (k.as_bytes(), *v)));
+    Some(servers)
 }
 
 /// Test-only stub.  See [`record_server`].
@@ -748,7 +823,7 @@ pub fn snapshot_caches() -> Option<HashMap<String, CacheZoneStats>> {
 /// Called by nginx exactly once per cycle (in the master, before workers
 /// fork).  On reload the slab pool's `data` field still points at the
 /// previous cycle's `VtsShared`, so we just re-publish that pointer;
-/// otherwise we allocate two empty `RbTreeMap`s and a fresh `VtsShared`
+/// otherwise we allocate empty `RbTreeMap`s and a fresh `VtsShared`
 /// from the slab pool itself.
 ///
 /// # Safety
@@ -801,10 +876,15 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         Ok(m) => m,
         Err(_) => return NGX_ERROR as ngx_int_t,
     };
+    let status_codes: StatusCodeMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
+        Ok(m) => m,
+        Err(_) => return NGX_ERROR as ngx_int_t,
+    };
     let shared = VtsShared {
         servers: RwLock::new(servers),
         upstreams: RwLock::new(upstreams),
         caches: RwLock::new(caches),
+        status_codes: RwLock::new(status_codes),
         start_time: ngx_time() as u64,
     };
     let shared_ptr: *mut VtsShared = match allocate(shared, &alloc) {
@@ -1052,6 +1132,30 @@ mod tests {
 
         let api = snap.get("api.example.com").unwrap();
         assert_eq!(api.requests, 1);
+    }
+
+    #[test]
+    fn merge_status_code_snapshot_attaches_codes_to_their_zone() {
+        let mut c = ServerCounters::new();
+        c.update(200, 0, 0, 0);
+        let mut snap = build_server_snapshot(vec![(b"example.com".as_ref(), &c)]);
+
+        let k404 = upstream_key_bytes("example.com", "404");
+        let kother = upstream_key_bytes("example.com", "other");
+        let kgone = upstream_key_bytes("gone.example.com", "200");
+        let entries: Vec<(&[u8], u64)> = vec![
+            (k404.as_slice(), 3),
+            (kother.as_slice(), 2),
+            (kgone.as_slice(), 9),
+            (b"no-separator".as_ref(), 1),
+        ];
+        merge_status_code_snapshot(&mut snap, entries);
+
+        assert_eq!(snap.len(), 1, "a code does not create a zone");
+        let codes = &snap["example.com"].status_codes;
+        assert_eq!(codes.len(), 2);
+        assert_eq!(codes[&StatusCodeSlot::Code(404)], 3);
+        assert_eq!(codes[&StatusCodeSlot::Other], 2);
     }
 
     #[test]

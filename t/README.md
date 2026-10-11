@@ -43,6 +43,7 @@ cpanm --notest Test::Nginx
 | `012.upstream_server_up.t` | `024.upstream_check.t` (the `down` half) | a peer is reported down when the configuration says so or when it has reached `max_fails`, up otherwise, and `max_fails 0` does not read as down |
 | `013.label_escaping.t` | no original; the original's display escapes nothing either | a `"` in a `server_name` or a unix socket path is escaped in every label that carries it, so one awkward name does not make the whole response unparseable |
 | `014.start_time.t` | no original | `process_start_time_seconds` is reported, unprefixed, as a recent gauge when a zone is configured, and not at all without one |
+| `015.status_codes.t` | no original; the original suite never turns `measure_status_codes` on | listed codes are counted per zone and the rest as `other`; a listed code reads zero before it occurs; `all` prints only codes that occurred; `host="*"` sums the zones; without the directive there is no such family; bad arguments stop nginx from starting |
 
 ## What is not ported, and why
 

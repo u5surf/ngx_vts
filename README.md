@@ -103,6 +103,12 @@ model without nginx.
   `response_duration` only the upstream's part
   (`$upstream_response_time`); a gap between them points at the
   client side rather than the upstream.
+- **Per-status-code counters** (opt-in) — `vts_measure_status_codes
+  200 404 500` or `vts_measure_status_codes all` adds
+  `nginx_vts_status_code_requests_total{host=…,code="404"}` per server
+  zone, with unmeasured codes counted as `code="other"`.  A counter is
+  only allocated once its code has occurred, so `all` costs a few
+  entries per zone rather than 500.
 - **Cache hit/miss metrics** per cache zone (`proxy_cache_path
   keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
@@ -301,9 +307,12 @@ zone. What still differs:
   `nginx_vts_upstream_response_duration_seconds` are always emitted,
   with fixed buckets, and `le` is written `1` rather than `1.000`.
   The original emits them only when `histogram_buckets` is set.
+- **Status codes** — `vts_measure_status_codes` takes the codes in
+  any order, where the original insists on ascending order, and
+  refuses `all` mixed with codes, which the original silently reads
+  as `all`.
 - **Not emitted yet** — `nginx_vts_server_cache_total`,
-  `nginx_vts_cache_bytes_total`,
-  `nginx_vts_status_code_requests_total` and the `nginx_vts_filter_*`
+  `nginx_vts_cache_bytes_total` and the `nginx_vts_filter_*`
   families.
 - **Upstreams without a group** — a `proxy_pass` straight to an
   address is reported under its own name rather than the original's
@@ -315,6 +324,7 @@ zone. What still differs:
 |-----------|---------|------|-------------|
 | `vts_zone` | `http` | `name size` | Declare the shared-memory zone backing all counters. Minimum size is 1 MB; without this directive the module silently falls back to process-local counters (mainly useful for tests). |
 | `vts_status` | `location` | — | Render the Prometheus text response at this location. |
+| `vts_measure_status_codes` | `http` | `all \| code ...` | Count requests per status code for every server zone, as `nginx_vts_status_code_requests_total`. Codes are 100–599; anything not listed is counted as `other`. The original's `vhost_traffic_status_measure_status_codes`. Off by default. |
 | `vts_upstream_stats` | `http`, `server`, `location` | `on \| off` | Accepted for backward compatibility; currently a no-op (upstream stats are always collected when `vts_zone` is set). |
 
 ## Capacity
@@ -472,9 +482,6 @@ The list below tracks known gaps relative to the original
 - Upstream peer state is read from the upstream group, but only
   `down` is exposed (as `nginx_vts_upstream_server_up`); `weight`,
   `max_fails`, `fail_timeout` and `backup` are not reported.
-- Per-status-code counters
-  (`vhost_traffic_status_measure_status_codes`) — only the
-  `1xx`/`2xx`/`3xx`/`4xx`/`5xx` class buckets are exposed.
 - Histogram bucket layout is fixed at the Prometheus
   `client_golang` defaults (5ms..10s, 11 buckets). There is no
   `vts_histogram_buckets`-style directive to customise the bounds.

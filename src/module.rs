@@ -22,17 +22,19 @@ use core::ptr;
 use ngx::core::Status;
 use ngx::ffi::{
     ngx_command_t, ngx_conf_set_flag_slot, ngx_conf_t, ngx_flag_t, ngx_http_module_t, ngx_int_t,
-    ngx_module_t, ngx_parse_size, ngx_shared_memory_add, ngx_str_t, ngx_uint_t, NGX_CONF_FLAG,
-    NGX_CONF_NOARGS, NGX_CONF_TAKE2, NGX_CONF_UNSET, NGX_HTTP_LOC_CONF, NGX_HTTP_LOC_CONF_OFFSET,
-    NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE, NGX_HTTP_SRV_CONF,
-    NGX_LOG_EMERG,
+    ngx_module_t, ngx_parse_size, ngx_shared_memory_add, ngx_str_t, ngx_uint_t, NGX_CONF_1MORE,
+    NGX_CONF_FLAG, NGX_CONF_NOARGS, NGX_CONF_TAKE2, NGX_CONF_UNSET, NGX_HTTP_LOC_CONF,
+    NGX_HTTP_LOC_CONF_OFFSET, NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE,
+    NGX_HTTP_SRV_CONF, NGX_LOG_EMERG,
 };
 use ngx::http::{
-    self, HttpModule, HttpModuleLocationConf, Merge, MergeConfigError, NgxHttpCoreModule,
+    self, HttpModule, HttpModuleConfExt, HttpModuleLocationConf, HttpModuleMainConf, Merge,
+    MergeConfigError, NgxHttpCoreModule,
 };
 use ngx::{http_request_handler, ngx_conf_log_error, ngx_string};
 
 use crate::prometheus::generate_vts_status_content;
+use crate::status_codes::MeasureStatusCodes;
 
 unsafe extern "C" {
     fn vts_init_shm_zone(shm_zone: *mut ngx::ffi::ngx_shm_zone_t, data: *mut c_void) -> ngx_int_t;
@@ -69,6 +71,24 @@ unsafe impl HttpModuleLocationConf for Module {
     type LocationConf = LocConf;
 }
 
+/// `http`-level configuration.
+#[derive(Debug, Default)]
+pub struct MainConf {
+    /// The codes `vts_measure_status_codes` asked for.
+    pub measure_status_codes: MeasureStatusCodes,
+}
+
+unsafe impl HttpModuleMainConf for Module {
+    type MainConf = MainConf;
+}
+
+/// The codes `vts_measure_status_codes` asked for, `Off` when the http
+/// block did not set it.
+pub(crate) fn measure_status_codes(o: &impl HttpModuleConfExt) -> &'static MeasureStatusCodes {
+    static OFF: MeasureStatusCodes = MeasureStatusCodes::Off;
+    Module::main_conf(o).map_or(&OFF, |mcf| &mcf.measure_status_codes)
+}
+
 impl Merge for LocConf {
     fn merge(&mut self, prev: &LocConf) -> Result<(), MergeConfigError> {
         if self.enable == NGX_CONF_UNSET as ngx_flag_t {
@@ -98,7 +118,7 @@ impl HttpModule for Module {
     }
 }
 
-static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 4] = [
+static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
     ngx_command_t {
         name: ngx_string!("vts_zone"),
         type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
@@ -124,13 +144,21 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 4] = [
         offset: core::mem::offset_of!(LocConf, enable),
         post: ptr::null_mut(),
     },
+    ngx_command_t {
+        name: ngx_string!("vts_measure_status_codes"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_1MORE) as ngx_uint_t,
+        set: Some(vts_measure_status_codes_directive),
+        conf: NGX_HTTP_MAIN_CONF_OFFSET,
+        offset: 0,
+        post: ptr::null_mut(),
+    },
     ngx_command_t::empty(),
 ];
 
 static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
     postconfiguration: Some(Module::postconfiguration),
-    create_main_conf: None,
+    create_main_conf: Some(Module::create_main_conf),
     init_main_conf: None,
     create_srv_conf: None,
     merge_srv_conf: None,
@@ -173,7 +201,7 @@ http_request_handler!(
         }
 
         let peer_states = crate::peers::collect(request);
-        let body = generate_vts_status_content(&peer_states);
+        let body = generate_vts_status_content(&peer_states, measure_status_codes(request));
 
         let Some(mut buf) = request.pool().create_buffer_from_str(&body) else {
             return http::HTTPStatus::INTERNAL_SERVER_ERROR.into();
@@ -277,4 +305,47 @@ extern "C" fn vts_status_directive(
     clcf.handler = Some(ngx_http_vts_status_handler);
 
     ngx::core::NGX_CONF_OK
+}
+
+/// `vts_measure_status_codes all | <code> ...`
+extern "C" fn vts_measure_status_codes_directive(
+    cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    conf: *mut c_void,
+) -> *mut c_char {
+    // SAFETY: configuration handlers always receive a valid `cf`, and
+    // NGX_HTTP_MAIN_CONF_OFFSET makes `conf` this module's `MainConf`.
+    let cf = unsafe { cf.as_mut().unwrap() };
+    let Some(mcf) = (unsafe { conf.cast::<MainConf>().as_mut() }) else {
+        return ngx::core::NGX_CONF_ERROR;
+    };
+
+    if mcf.measure_status_codes != MeasureStatusCodes::Off {
+        return c"is duplicate".as_ptr().cast_mut();
+    }
+
+    // SAFETY: NGX_CONF_1MORE guarantees at least two elements, allocated
+    // from the configuration pool.
+    let args = unsafe { (*cf.args).as_slice() };
+    let parsed = MeasureStatusCodes::parse(
+        args[1..]
+            .iter()
+            // SAFETY: arguments point into the configuration pool.
+            .map(|arg| {
+                unsafe { ngx::core::NgxStr::from_ngx_str(*arg) }
+                    .to_str()
+                    .unwrap_or("")
+            }),
+    );
+
+    match parsed {
+        Ok(measure) => {
+            mcf.measure_status_codes = measure;
+            ngx::core::NGX_CONF_OK
+        }
+        Err(err) => {
+            ngx_conf_log_error!(NGX_LOG_EMERG, cf, "vts_measure_status_codes: {}", err);
+            ngx::core::NGX_CONF_ERROR
+        }
+    }
 }
