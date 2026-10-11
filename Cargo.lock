@@ -108,9 +108,9 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "libloading"
@@ -152,7 +152,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "nginx-sys"
 version = "0.5.0"
-source = "git+https://github.com/nginx/ngx-rust#3cbd178f87f3cde86c511afe3ee42613a3ba1cff"
+source = "git+https://github.com/nginx/ngx-rust#a931ebbd9d55fdd6f00a4c22014e068fbfd63e81"
 dependencies = [
  "bindgen",
  "cc",
@@ -165,7 +165,7 @@ dependencies = [
 [[package]]
 name = "ngx"
 version = "0.5.0"
-source = "git+https://github.com/nginx/ngx-rust#3cbd178f87f3cde86c511afe3ee42613a3ba1cff"
+source = "git+https://github.com/nginx/ngx-rust#a931ebbd9d55fdd6f00a4c22014e068fbfd63e81"
 dependencies = [
  "allocator-api2",
  "lock_api",
