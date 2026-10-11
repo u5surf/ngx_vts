@@ -94,10 +94,15 @@ model without nginx.
 - **Upstream and server-zone request-time histograms** — classic
   Prometheus `_bucket{le=...}` / `_sum` / `_count` over a shared
   fixed 11-bucket layout (client_golang defaults), exposed as
+  `nginx_vts_upstream_request_duration_seconds_bucket{...}`,
   `nginx_vts_upstream_response_duration_seconds_bucket{...}` and
-  `nginx_vts_server_request_duration_seconds_bucket{...}`.  Both
+  `nginx_vts_server_request_duration_seconds_bucket{...}`.  All
   feed `histogram_quantile(0.99, ...)` for p50/p90/p99 panels per
-  upstream peer and per vhost.
+  upstream peer and per vhost.  For a peer, `request_duration` is the
+  whole request as the client saw it (`$request_time`) and
+  `response_duration` only the upstream's part
+  (`$upstream_response_time`); a gap between them points at the
+  client side rather than the upstream.
 - **Cache hit/miss metrics** per cache zone (`proxy_cache_path
   keys_zone=NAME:SIZE`) — counts of `HIT`, `MISS`, `BYPASS`, `EXPIRED`,
   `STALE`, `UPDATING`, `REVALIDATED`, `SCARCE` aggregated across
@@ -290,13 +295,13 @@ zone. What still differs:
   started from zero, which a reload does not change. The
   `*_request_seconds` and `*_response_seconds` averages are cumulative
   (`sum / count`), not the original's moving average.
-- **Histograms** — `nginx_vts_server_request_duration_seconds` and
+- **Histograms** — `nginx_vts_server_request_duration_seconds`,
+  `nginx_vts_upstream_request_duration_seconds` and
   `nginx_vts_upstream_response_duration_seconds` are always emitted,
   with fixed buckets, and `le` is written `1` rather than `1.000`.
   The original emits them only when `histogram_buckets` is set.
 - **Not emitted yet** — `nginx_vts_server_cache_total`,
   `nginx_vts_cache_bytes_total`,
-  `nginx_vts_upstream_request_duration_seconds`,
   `nginx_vts_status_code_requests_total` and the `nginx_vts_filter_*`
   families.
 - **Upstreams without a group** — a `proxy_pass` straight to an

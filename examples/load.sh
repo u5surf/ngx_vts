@@ -10,9 +10,10 @@
 #     ./load.sh -d 60                 # stop after 60 seconds
 #
 # Distribution per request (defaults):
-#   85%  cached path with one of N URLs    → mix of HIT and MISS
+#   80%  cached path with one of N URLs    → mix of HIT and MISS
 #   10%  /bypass with X-Bypass: 1          → BYPASS
 #    5%  brand-new path each time          → MISS (forces cache growth)
+#    5%  /slow, sent back at 8 KB/s        → slow client, run in background
 #
 # Each request also picks one of four virtual hosts at random
 # (`app1/app2/api/static.example.test`) by setting `Host:` so all four
@@ -34,7 +35,7 @@ while getopts "u:r:d:n:h" opt; do
         d) DURATION="$OPTARG" ;;
         n) N_CACHED_PATHS="$OPTARG" ;;
         h|*)
-            sed -n '2,18p' "$0"
+            sed -n '2,19p' "$0"
             exit 0
             ;;
     esac
@@ -60,13 +61,17 @@ fi
 
 echo "load.sh: hitting $TARGET at ~${RATE} req/s (Ctrl-C to stop)"
 
-trap 'echo; echo "load.sh: stopped after $count requests"; exit 0' INT TERM
+# The /slow requests run in the background. Stopping early (Ctrl-C,
+# TERM) ends them with the script; reaching -d waits for them instead,
+# so the last samples are recorded before the script reports it is done.
+trap 'echo; kill $(jobs -p) 2>/dev/null; wait; echo "load.sh: stopped after $count requests"; exit 0' INT TERM
 
 VHOSTS=(app1.example.test app2.example.test api.example.test static.example.test)
 
 count=0
 while true; do
     if [ "$deadline" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        wait
         echo "load.sh: duration reached, stopping after $count requests"
         exit 0
     fi
@@ -78,19 +83,25 @@ while true; do
 
     # Pick a request kind by rolling a 0..99 die.
     roll=$(( RANDOM % 100 ))
-    if [ "$roll" -lt 85 ]; then
+    if [ "$roll" -lt 80 ]; then
         path="/p$(( RANDOM % N_CACHED_PATHS ))"
         curl -sS -o /dev/null --max-time 5 -H "Host: $host" "$TARGET$path" || true
-    elif [ "$roll" -lt 95 ]; then
+    elif [ "$roll" -lt 90 ]; then
         curl -sS -o /dev/null --max-time 5 \
             -H "Host: app1.example.test" \
             -H "X-Bypass: 1" \
             "$TARGET/bypass/" || true
-    else
+    elif [ "$roll" -lt 95 ]; then
         # Brand-new path: forces a MISS every time.  Capped at a few
         # thousand to keep the slab pool from filling up.
         path="/once-$(( RANDOM * 1000 + count % 1000 ))"
         curl -sS -o /dev/null --max-time 5 -H "Host: $host" "$TARGET$path" || true
+    else
+        # Slow client: takes ~2 s, so it runs in the background to keep
+        # the pacing of the other requests.
+        curl -sS -o /dev/null --max-time 5 \
+            -H "Host: app1.example.test" \
+            "$TARGET/slow" &
     fi
 
     count=$(( count + 1 ))

@@ -1,6 +1,6 @@
 # vi:set ft=perl ts=4 sw=4 et fdm=marker:
 
-# Upstream response time histogram, ported from nginx-module-vts
+# Upstream request and response time histograms, ported from nginx-module-vts
 # t/023.histogram_buckets.t.
 #
 # The original configures its own bucket boundaries with
@@ -13,7 +13,7 @@
 use Test::Nginx::Socket;
 
 repeat_each(1);
-plan tests => 16;
+plan tests => 24;
 no_shuffle();
 run_tests();
 
@@ -115,4 +115,61 @@ __DATA__
 [
     qr/\Apeer\z/,
     qr/# TYPE nginx_vts_upstream_response_duration_seconds histogram/,
+]
+
+
+
+=== TEST 5: the request time histogram is emitted with +Inf, _sum and _count
+--- http_config
+    vts_zone main 1m;
+
+    server {
+        listen 1985;
+        location / { return 200 "peer"; }
+    }
+
+    upstream backend {
+        server 127.0.0.1:1985;
+    }
+--- config
+    location /up     { proxy_pass http://backend/; }
+    location /status { vts_status; }
+--- request eval
+['GET /up', 'GET /status']
+--- response_body_like eval
+[
+    qr/\Apeer\z/,
+    qr/# TYPE nginx_vts_upstream_request_duration_seconds histogram\n(?:nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="[0-9.]+"\} [01]\n)+nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="\+Inf"\} 1\nnginx_vts_upstream_request_duration_seconds_sum\{upstream="backend",backend="127\.0\.0\.1:1985"\} [0-9.]+\nnginx_vts_upstream_request_duration_seconds_count\{upstream="backend",backend="127\.0\.0\.1:1985"\} 1\n/,
+]
+
+
+
+=== TEST 6: the request histogram includes sending the response, the response histogram does not
+The peer answers at once, but limit_rate holds the reply to the client back for
+over a second, so only the request time lands above le="0.5".
+--- http_config eval
+qq{
+    vts_zone main 1m;
+
+    server {
+        listen 1985;
+        location / { return 200 "@{[ 'x' x 2048 ]}"; }
+    }
+
+    upstream backend {
+        server 127.0.0.1:1985;
+    }
+}
+--- config
+    location /up {
+        proxy_pass http://backend/;
+        limit_rate 1k;
+    }
+    location /status { vts_status; }
+--- request eval
+['GET /up', 'GET /status']
+--- response_body_like eval
+[
+    qr/\Ax{2048}\z/,
+    qr/nginx_vts_upstream_request_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="0\.5"\} 0\n.*nginx_vts_upstream_response_duration_seconds_bucket\{upstream="backend",backend="127\.0\.0\.1:1985",le="0\.5"\} 1\n/s,
 ]

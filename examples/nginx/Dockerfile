@@ -107,8 +107,9 @@ COPY --from=rust-build \
     /build/ngx_vts_rust/target/release/libngx_vts_rust.so \
     /build/ngx_vts_rust/target/release/libngx_vts_rust.so
 
-RUN mkdir -p /etc/nginx /var/log/nginx /var/cache/nginx/zone1 /run \
-    && chown -R nginx:nginx /var/cache/nginx
+RUN mkdir -p /etc/nginx /var/log/nginx /var/cache/nginx/zone1 /run /srv/www \
+    && chown -R nginx:nginx /var/cache/nginx \
+    && head -c 16384 /dev/zero | tr '\0' 'x' > /srv/www/large
 
 COPY examples/nginx/nginx.conf /etc/nginx/nginx.conf
 

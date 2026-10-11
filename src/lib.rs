@@ -1137,6 +1137,7 @@ fn initialize_upstream_zones_from_config() -> Result<(), &'static str> {
                 server.response_time_total = 0;
                 server.response_time_counter = 0;
                 server.response_buckets = [0; crate::upstream_stats::RESPONSE_TIME_BUCKET_COUNT];
+                server.request_buckets = [0; crate::upstream_stats::RESPONSE_TIME_BUCKET_COUNT];
             }
         }
     }

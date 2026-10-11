@@ -72,6 +72,12 @@ pub struct UpstreamServerStats {
     /// implicit `+Inf` bucket equals `response_time_counter`.
     pub response_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
 
+    /// Cumulative counts of request-time samples whose value in
+    /// milliseconds is `<= RESPONSE_TIME_BUCKET_BOUNDS_MS[i]`.  Every
+    /// sample is counted, including sub-millisecond ones, so the
+    /// implicit `+Inf` bucket equals `request_counter`.
+    pub request_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
+
     // Upstream peer-state fields below are populated to defaults
     // today and have no readers yet.  Wiring them up to the nginx
     // upstream configuration (`ngx_http_upstream_server_t`) is one
@@ -136,6 +142,7 @@ impl UpstreamServerStats {
             response_time_total: 0,
             response_time_counter: 0,
             response_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
+            request_buckets: [0; RESPONSE_TIME_BUCKET_COUNT],
             weight: 1,
             max_fails: 1,
             fail_timeout: 10,
@@ -170,6 +177,11 @@ impl UpstreamServerStats {
         if request_time > 0 {
             self.request_time_total += request_time;
             self.request_time_counter += 1;
+        }
+        for (i, &bound) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
+            if request_time <= bound {
+                self.request_buckets[i] += 1;
+            }
         }
 
         // See `shm.rs::UpstreamCounters::update` for the reasoning:
@@ -303,6 +315,8 @@ mod tests {
 
         assert_eq!(stats.request_time_total, 300);
         assert_eq!(stats.request_time_counter, 2);
+        assert_eq!(stats.request_buckets[4], 1); // le=100 → {100}
+        assert_eq!(stats.request_buckets[5], 2); // le=250 → {100,200}
         assert_eq!(stats.response_time_total, 125);
         assert_eq!(stats.response_time_counter, 2);
 

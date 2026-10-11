@@ -264,6 +264,81 @@
           "legendFormat": "{{status}}"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream request time percentiles (p50/p90/p99)",
+      "id": 9,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 28, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le, upstream, backend) (rate(nginx_vts_upstream_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "p50 {{upstream}} -> {{backend}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum by (le, upstream, backend) (rate(nginx_vts_upstream_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "p90 {{upstream}} -> {{backend}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, upstream, backend) (rate(nginx_vts_upstream_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "p99 {{upstream}} -> {{backend}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream p99: request (client view) vs response (upstream only)",
+      "id": 10,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 28, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, upstream) (rate(nginx_vts_upstream_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "request {{upstream}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le, upstream) (rate(nginx_vts_upstream_response_duration_seconds_bucket[1m])))",
+          "legendFormat": "response {{upstream}}"
+        }
+      ]
     }
   ],
   "refresh": "5s",

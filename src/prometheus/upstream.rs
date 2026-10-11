@@ -1,7 +1,7 @@
 //! `nginx_vts_upstream_*` series, labelled `upstream` and `backend` as in
 //! the original module: bytes, status-class request counters, request and
-//! response time totals and averages, and the
-//! `response_duration_seconds` classic histogram (compatible with
+//! response time totals and averages, and the `request_duration_seconds`
+//! and `response_duration_seconds` classic histograms (compatible with
 //! `histogram_quantile()` for p50/p90/p99 panels).
 //!
 //! `upstream_server_up` has no counterpart in the original; it comes from
@@ -10,7 +10,9 @@
 use std::collections::HashMap;
 
 use super::{format_le_bound, label, PrometheusFormatter};
-use crate::upstream_stats::{UpstreamServerStats, UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS};
+use crate::upstream_stats::{
+    UpstreamServerStats, UpstreamZone, RESPONSE_TIME_BUCKET_BOUNDS_MS, RESPONSE_TIME_BUCKET_COUNT,
+};
 
 impl PrometheusFormatter {
     /// Format upstream statistics into Prometheus metrics.
@@ -116,7 +118,26 @@ impl PrometheusFormatter {
             output.push('\n');
         }
 
-        self.format_upstream_response_histogram(&mut output, &rows);
+        self.format_upstream_histogram(
+            &mut output,
+            &rows,
+            "request_duration_seconds",
+            "The histogram of request processing time including upstream",
+            |s| (&s.request_buckets, s.request_time_total, s.request_counter),
+        );
+        self.format_upstream_histogram(
+            &mut output,
+            &rows,
+            "response_duration_seconds",
+            "The histogram of only upstream response processing time",
+            |s| {
+                (
+                    &s.response_buckets,
+                    s.response_time_total,
+                    s.response_time_counter,
+                )
+            },
+        );
 
         // nginx_vts_upstream_server_up
         //
@@ -143,34 +164,37 @@ impl PrometheusFormatter {
         output
     }
 
-    /// `nginx_vts_upstream_response_duration_seconds` classic
-    /// histogram (`_bucket{le="..."}`, `_sum`, `_count`).  Compatible
-    /// with `histogram_quantile()` for p50 / p90 / p99 panels.
-    fn format_upstream_response_histogram(
+    /// One `nginx_vts_upstream_<name>` classic histogram
+    /// (`_bucket{le="..."}`, `_sum`, `_count`).  `sample` picks the
+    /// buckets, the total in milliseconds and the sample count out of a
+    /// row; the count is also the `+Inf` bucket.
+    fn format_upstream_histogram(
         &self,
         output: &mut String,
         rows: &[(String, &UpstreamServerStats)],
+        name: &str,
+        help: &str,
+        sample: impl Fn(&UpstreamServerStats) -> (&[u64; RESPONSE_TIME_BUCKET_COUNT], u64, u64),
     ) {
         let prefix = &self.metric_prefix;
         output.push_str(&format!(
-            "# HELP {prefix}upstream_response_duration_seconds The histogram of only upstream response processing time\n\
-             # TYPE {prefix}upstream_response_duration_seconds histogram\n"
+            "# HELP {prefix}upstream_{name} {help}\n\
+             # TYPE {prefix}upstream_{name} histogram\n"
         ));
         for (labels, stats) in rows {
+            let (buckets, total_ms, count) = sample(stats);
             for (i, &bound_ms) in RESPONSE_TIME_BUCKET_BOUNDS_MS.iter().enumerate() {
                 output.push_str(&format!(
-                    "{prefix}upstream_response_duration_seconds_bucket{{{labels},le=\"{}\"}} {}\n",
+                    "{prefix}upstream_{name}_bucket{{{labels},le=\"{}\"}} {}\n",
                     format_le_bound(bound_ms as f64 / 1000.0),
-                    stats.response_buckets[i]
+                    buckets[i]
                 ));
             }
-            // +Inf bucket holds every sample, equal to _count.
             output.push_str(&format!(
-                "{prefix}upstream_response_duration_seconds_bucket{{{labels},le=\"+Inf\"}} {count}\n\
-                 {prefix}upstream_response_duration_seconds_sum{{{labels}}} {:.3}\n\
-                 {prefix}upstream_response_duration_seconds_count{{{labels}}} {count}\n",
-                stats.response_time_total as f64 / 1000.0,
-                count = stats.response_time_counter
+                "{prefix}upstream_{name}_bucket{{{labels},le=\"+Inf\"}} {count}\n\
+                 {prefix}upstream_{name}_sum{{{labels}}} {:.3}\n\
+                 {prefix}upstream_{name}_count{{{labels}}} {count}\n",
+                total_ms as f64 / 1000.0
             ));
         }
         output.push('\n');
@@ -194,6 +218,7 @@ mod tests {
         server1.response_time_total = 2500;
         server1.response_time_counter = 100;
         server1.response_buckets = [10, 20, 35, 60, 80, 95, 98, 99, 100, 100, 100];
+        server1.request_buckets = [5, 15, 30, 50, 70, 90, 97, 99, 100, 100, 100];
         server1.responses.status_2xx = 95;
         server1.responses.status_4xx = 3;
         server1.responses.status_5xx = 2;
@@ -267,7 +292,17 @@ mod tests {
         assert!(out.contains("# TYPE nginx_vts_upstream_response_seconds_total counter"));
         assert!(out.contains("# TYPE nginx_vts_upstream_response_seconds gauge"));
 
-        // Histogram.
+        // Histograms, request before response as in the original.
+        assert!(out.contains("# TYPE nginx_vts_upstream_request_duration_seconds histogram"));
+        assert!(out.contains("nginx_vts_upstream_request_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.005\"} 5"));
+        assert!(out.contains("nginx_vts_upstream_request_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.1\"} 70"));
+        assert!(out.contains("nginx_vts_upstream_request_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"+Inf\"} 100"));
+        assert!(out.contains("nginx_vts_upstream_request_duration_seconds_sum{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 5.000"));
+        assert!(out.contains("nginx_vts_upstream_request_duration_seconds_count{upstream=\"test_backend\",backend=\"10.0.0.1:80\"} 100"));
+        assert!(
+            out.find("# TYPE nginx_vts_upstream_request_duration_seconds histogram")
+                < out.find("# TYPE nginx_vts_upstream_response_duration_seconds histogram")
+        );
         assert!(out.contains("# TYPE nginx_vts_upstream_response_duration_seconds histogram"));
         assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.005\"} 10"));
         assert!(out.contains("nginx_vts_upstream_response_duration_seconds_bucket{upstream=\"test_backend\",backend=\"10.0.0.1:80\",le=\"0.1\"} 80"));
