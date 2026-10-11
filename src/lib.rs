@@ -387,14 +387,14 @@ pub extern "C" fn vts_update_statistics() {
 #[cfg(not(test))]
 pub(crate) fn init_module(cf: &mut ngx_conf_t) -> ngx_int_t {
     if !log_handler::register(cf) {
-        return NGX_ERROR as ngx_int_t;
+        return NGX_ERROR;
     }
 
     if initialize_upstream_zones_from_config().is_err() {
-        return NGX_ERROR as ngx_int_t;
+        return NGX_ERROR;
     }
 
-    NGX_OK as ngx_int_t
+    NGX_OK
 }
 
 #[cfg(test)]

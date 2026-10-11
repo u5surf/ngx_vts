@@ -22,10 +22,10 @@ use core::ptr;
 use ngx::core::Status;
 use ngx::ffi::{
     ngx_command_t, ngx_conf_set_flag_slot, ngx_conf_t, ngx_flag_t, ngx_http_module_t, ngx_int_t,
-    ngx_module_t, ngx_parse_size, ngx_shared_memory_add, ngx_str_t, ngx_uint_t, NGX_CONF_1MORE,
-    NGX_CONF_FLAG, NGX_CONF_NOARGS, NGX_CONF_TAKE2, NGX_CONF_UNSET, NGX_HTTP_LOC_CONF,
-    NGX_HTTP_LOC_CONF_OFFSET, NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE,
-    NGX_HTTP_SRV_CONF, NGX_LOG_EMERG,
+    ngx_module_t, ngx_parse_size, ngx_shared_memory_add, ngx_str_t, NGX_CONF_1MORE, NGX_CONF_FLAG,
+    NGX_CONF_NOARGS, NGX_CONF_TAKE2, NGX_CONF_UNSET, NGX_HTTP_LOC_CONF, NGX_HTTP_LOC_CONF_OFFSET,
+    NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE, NGX_HTTP_SRV_CONF,
+    NGX_LOG_EMERG,
 };
 use ngx::http::{
     self, HttpModule, HttpModuleConfExt, HttpModuleLocationConf, HttpModuleMainConf, Merge,
@@ -62,7 +62,7 @@ pub struct LocConf {
 impl Default for LocConf {
     fn default() -> Self {
         Self {
-            enable: NGX_CONF_UNSET as ngx_flag_t,
+            enable: NGX_CONF_UNSET,
         }
     }
 }
@@ -91,8 +91,8 @@ pub(crate) fn measure_status_codes(o: &impl HttpModuleConfExt) -> &'static Measu
 
 impl Merge for LocConf {
     fn merge(&mut self, prev: &LocConf) -> Result<(), MergeConfigError> {
-        if self.enable == NGX_CONF_UNSET as ngx_flag_t {
-            self.enable = if prev.enable == NGX_CONF_UNSET as ngx_flag_t {
+        if self.enable == NGX_CONF_UNSET {
+            self.enable = if prev.enable == NGX_CONF_UNSET {
                 0
             } else {
                 prev.enable
@@ -121,7 +121,7 @@ impl HttpModule for Module {
 static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
     ngx_command_t {
         name: ngx_string!("vts_zone"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2) as ngx_uint_t,
+        type_: NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE2,
         set: Some(vts_zone_directive),
         conf: NGX_HTTP_MAIN_CONF_OFFSET,
         offset: 0,
@@ -129,7 +129,7 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
     },
     ngx_command_t {
         name: ngx_string!("vts_status"),
-        type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
+        type_: NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
         set: Some(vts_status_directive),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: 0,
@@ -137,8 +137,7 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
     },
     ngx_command_t {
         name: ngx_string!("vts_upstream_stats"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG)
-            as ngx_uint_t,
+        type_: NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
         set: Some(ngx_conf_set_flag_slot),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: core::mem::offset_of!(LocConf, enable),
@@ -146,7 +145,7 @@ static mut NGX_HTTP_VTS_COMMANDS: [ngx_command_t; 5] = [
     },
     ngx_command_t {
         name: ngx_string!("vts_measure_status_codes"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_1MORE) as ngx_uint_t,
+        type_: NGX_HTTP_MAIN_CONF | NGX_CONF_1MORE,
         set: Some(vts_measure_status_codes_directive),
         conf: NGX_HTTP_MAIN_CONF_OFFSET,
         offset: 0,
@@ -176,7 +175,7 @@ static NGX_HTTP_VTS_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
 pub static mut ngx_http_vts_module: ngx_module_t = ngx_module_t {
     ctx: &raw const NGX_HTTP_VTS_MODULE_CTX as _,
     commands: unsafe { &raw mut NGX_HTTP_VTS_COMMANDS[0] },
-    type_: NGX_HTTP_MODULE as ngx_uint_t,
+    type_: NGX_HTTP_MODULE,
     ..ngx_module_t::default()
 };
 
@@ -187,8 +186,8 @@ http_request_handler!(
     |request: &mut http::Request| {
         let raw = request.as_ref();
 
-        if raw.method & (ngx::ffi::NGX_HTTP_GET | ngx::ffi::NGX_HTTP_HEAD) as ngx_uint_t == 0 {
-            return Status(ngx::ffi::NGX_HTTP_NOT_ALLOWED as ngx_int_t);
+        if raw.method & (ngx::ffi::NGX_HTTP_GET | ngx::ffi::NGX_HTTP_HEAD) == 0 {
+            return Status(ngx::ffi::NGX_HTTP_NOT_ALLOWED);
         }
 
         // The log-phase handler looks for this context and skips the request, so
