@@ -847,13 +847,13 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     _data: *mut c_void,
 ) -> ngx_int_t {
     if shm_zone.is_null() {
-        return NGX_ERROR as ngx_int_t;
+        return NGX_ERROR;
     }
     let shm_zone_ref = &mut *shm_zone;
 
     let mut alloc = match SlabPool::from_shm_zone(shm_zone_ref) {
         Some(a) => a,
-        None => return NGX_ERROR as ngx_int_t,
+        None => return NGX_ERROR,
     };
 
     // `vts_zone` left this cycle's main configuration in `data`; it has
@@ -882,26 +882,26 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         shm_zone_ref.data = existing as *mut c_void;
         VTS_SHARED.store(existing, Ordering::Release);
         publish_zone(shm_zone_ref, &alloc);
-        return NGX_OK as ngx_int_t;
+        return NGX_OK;
     }
 
     // First time: create empty maps inside the slab pool and store them
     // inside a `VtsShared` allocated from the same pool.
     let servers: ServerMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
         Ok(m) => m,
-        Err(_) => return NGX_ERROR as ngx_int_t,
+        Err(_) => return NGX_ERROR,
     };
     let upstreams: UpstreamMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
         Ok(m) => m,
-        Err(_) => return NGX_ERROR as ngx_int_t,
+        Err(_) => return NGX_ERROR,
     };
     let caches: CacheMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
         Ok(m) => m,
-        Err(_) => return NGX_ERROR as ngx_int_t,
+        Err(_) => return NGX_ERROR,
     };
     let status_codes: StatusCodeMap<SlabPool> = match RbTreeMap::try_new_in(alloc.clone()) {
         Ok(m) => m,
-        Err(_) => return NGX_ERROR as ngx_int_t,
+        Err(_) => return NGX_ERROR,
     };
     let shared = VtsShared {
         servers: RwLock::new(servers),
@@ -913,7 +913,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     };
     let shared_ptr: *mut VtsShared = match allocate(shared, &alloc) {
         Ok(p) => p.as_ptr(),
-        Err(_) => return NGX_ERROR as ngx_int_t,
+        Err(_) => return NGX_ERROR,
     };
 
     shm_zone_ref.data = shared_ptr as *mut c_void;
@@ -921,7 +921,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     VTS_SHARED.store(shared_ptr, Ordering::Release);
     publish_zone(shm_zone_ref, &alloc);
 
-    NGX_OK as ngx_int_t
+    NGX_OK
 }
 
 /// Publishes the slab pool and the configured zone size for `shm_info`.
@@ -942,7 +942,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
     _shm_zone: *mut ngx_shm_zone_t,
     _data: *mut c_void,
 ) -> ngx_int_t {
-    NGX_ERROR as ngx_int_t
+    NGX_ERROR
 }
 
 #[cfg(test)]
