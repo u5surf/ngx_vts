@@ -131,8 +131,9 @@ model without nginx.
 
 ### Requirements
 
-- Rust 1.85 or later (ngx-rust 0.5 uses edition 2024).
-- nginx source tree (any 1.24+ release; CI is pinned to 1.28.0).
+- Rust 1.85 or later (ngx-rust, taken from its git repository, uses
+  edition 2024).
+- nginx source tree (any 1.24+ release; CI is pinned to 1.30.1).
 - A C compiler (`cc` / `clang`).
 - pcre2 and zlib headers for the nginx build.
 
@@ -417,10 +418,21 @@ so a restart shows up as a drop to zero on the graph.
 NGINX_SOURCE_DIR=/path/to/nginx-source cargo test --lib
 ```
 
-~75 unit tests cover the shared-table data model, the upstream
+The unit tests cover the shared-table data model, the upstream
 tracker, the Prometheus formatter (per metric family), the cache
 statistics helpers, the LOG_PHASE-level FFI, and the rendered
 `/status` output via the process-local `VTS_MANAGER` fallback.
+
+The integration tests under `t/` run a real nginx with the module
+built in, using `Test::Nginx::Socket` like the original module's
+suite:
+
+```bash
+TEST_NGINX_BINARY=/path/to/nginx-source/objs/nginx prove t/
+```
+
+See [t/README.md](t/README.md) for how to build that nginx and what
+each file covers.
 
 ### Lints
 
@@ -452,9 +464,9 @@ The list below tracks known gaps relative to the original
 ### Metric coverage
 - Some of the original's families are not emitted yet; see
   [Compatibility with nginx-module-vts](#compatibility-with-nginx-module-vts).
-- Upstream peer state (`down`, `weight`, `max_fails`,
-  `fail_timeout`, `backup`) is not yet read from the nginx upstream
-  configuration.
+- Upstream peer state is read from the upstream group, but only
+  `down` is exposed (as `nginx_vts_upstream_server_up`); `weight`,
+  `max_fails`, `fail_timeout` and `backup` are not reported.
 - Per-status-code counters
   (`vhost_traffic_status_measure_status_codes`) — only the
   `1xx`/`2xx`/`3xx`/`4xx`/`5xx` class buckets are exposed.
