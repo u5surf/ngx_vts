@@ -127,7 +127,9 @@ fn record_server_zone(r: &ngx_http_request_t, request_time: u64) {
     // SAFETY: a request being logged still owns its connection.
     let bytes_out = unsafe { r.connection.as_ref() }.map_or(0, |c| to_u64(c.sent));
 
-    crate::track_server_request(server_zone, status, bytes_in, bytes_out, request_time);
+    let slot = crate::module::measure_status_codes(r).slot(status);
+
+    crate::track_server_request(server_zone, status, bytes_in, bytes_out, request_time, slot);
 }
 
 /// Upstream and cache updates, performed only when the request went

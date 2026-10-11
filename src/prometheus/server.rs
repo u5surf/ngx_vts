@@ -1,13 +1,16 @@
-//! `nginx_vts_server_*` series, labelled `host` as in the original module.
+//! `nginx_vts_server_*` series, labelled `host` as in the original module,
+//! and `nginx_vts_status_code_requests_total`, which breaks the same zones
+//! down by status code when `vts_measure_status_codes` asks for it.
 //!
 //! Every zone is followed by the original's aggregate row, `host="*"`,
 //! which sums all of them. Dashboards written against the original read
 //! the server-wide totals from that row.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{format_le_bound, label, PrometheusFormatter};
 use crate::stats::VtsServerStats;
+use crate::status_codes::{MeasureStatusCodes, StatusCodeSlot};
 use crate::upstream_stats::RESPONSE_TIME_BUCKET_BOUNDS_MS;
 
 /// The `host` the original module gives the row that sums every zone
@@ -106,6 +109,63 @@ impl PrometheusFormatter {
     }
 }
 
+impl PrometheusFormatter {
+    /// `nginx_vts_status_code_requests_total`, as the original prints it:
+    /// every zone gets an `other` row and, for a list of codes, a row per
+    /// listed code even while it reads zero. With `all` only the codes that
+    /// occurred are printed, since the other few hundred would all be zero.
+    /// Nothing at all is printed when the directive is absent.  A count
+    /// for a code that is not measured any more is printed as `other`.
+    pub fn format_status_code_stats(
+        &self,
+        server_stats: &HashMap<String, VtsServerStats>,
+        measure: &MeasureStatusCodes,
+    ) -> String {
+        let listed: &[u16] = match measure {
+            MeasureStatusCodes::Off => return String::new(),
+            MeasureStatusCodes::All => &[],
+            MeasureStatusCodes::Listed(codes) => codes,
+        };
+
+        let prefix = &self.metric_prefix;
+        let mut sum: BTreeMap<StatusCodeSlot, u64> = BTreeMap::new();
+        for stats in server_stats.values() {
+            for (&slot, &count) in &stats.status_codes {
+                *sum.entry(slot).or_insert(0) += count;
+            }
+        }
+        let rows = server_stats
+            .iter()
+            .map(|(host, stats)| (label::escape(host), &stats.status_codes))
+            .chain(std::iter::once((label::escape(SUM_KEY), &sum)));
+
+        let mut output = format!(
+            "# HELP {prefix}status_code_requests_total The requests counter by status code
+             # TYPE {prefix}status_code_requests_total counter
+"
+        );
+        for (host, codes) in rows {
+            let mut slots: BTreeMap<StatusCodeSlot, u64> = listed
+                .iter()
+                .map(|&code| (StatusCodeSlot::Code(code), 0))
+                .chain(std::iter::once((StatusCodeSlot::Other, 0)))
+                .collect();
+            for (&slot, &count) in codes {
+                *slots.entry(measure.reclassify(slot)).or_insert(0) += count;
+            }
+            for (slot, count) in slots {
+                output.push_str(&format!(
+                    "{prefix}status_code_requests_total{{host=\"{host}\",code=\"{}\"}} {count}\n",
+                    slot.label()
+                ));
+            }
+        }
+        output.push('\n');
+
+        output
+    }
+}
+
 /// The `host="*"` row: every zone's counters added together, with the
 /// average taken over the combined requests.
 fn sum_zones(server_stats: &HashMap<String, VtsServerStats>) -> VtsServerStats {
@@ -154,6 +214,7 @@ mod tests {
                 avg: total / requests as f64,
             },
             request_buckets: [10, 20, 30, 35, 40, 41, 42, 42, 42, 42, 42],
+            status_codes: BTreeMap::new(),
         }
     }
 
@@ -242,5 +303,122 @@ mod tests {
                 "unescaped host in: {line}"
             );
         }
+    }
+
+    fn with_codes(codes: &[(StatusCodeSlot, u64)]) -> VtsServerStats {
+        VtsServerStats {
+            status_codes: codes.iter().copied().collect(),
+            ..VtsServerStats::default()
+        }
+    }
+
+    #[test]
+    fn a_code_no_longer_measured_is_printed_as_other() {
+        // 200 was counted by a worker still on a configuration that listed
+        // it; the one loaded now lists only 404.
+        let zones = HashMap::from([(
+            "example.test".to_string(),
+            with_codes(&[
+                (StatusCodeSlot::Code(200), 4),
+                (StatusCodeSlot::Code(404), 3),
+                (StatusCodeSlot::Other, 2),
+            ]),
+        )]);
+        let measure = MeasureStatusCodes::Listed(vec![404]);
+
+        let out = PrometheusFormatter::new().format_status_code_stats(&zones, &measure);
+        assert!(!out.contains("code=\"200\""), "200 printed in:\n{out}");
+        for line in [
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"404\"} 3\n",
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"other\"} 6\n",
+            "nginx_vts_status_code_requests_total{host=\"*\",code=\"other\"} 6\n",
+        ] {
+            assert!(out.contains(line), "missing {line:?} in:\n{out}");
+        }
+    }
+
+    #[test]
+    fn status_codes_are_not_printed_unless_measured() {
+        let zones = HashMap::from([(
+            "example.test".to_string(),
+            with_codes(&[(StatusCodeSlot::Code(200), 1)]),
+        )]);
+
+        let out =
+            PrometheusFormatter::new().format_status_code_stats(&zones, &MeasureStatusCodes::Off);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn listed_codes_are_printed_even_at_zero() {
+        let zones = HashMap::from([(
+            "example.test".to_string(),
+            with_codes(&[(StatusCodeSlot::Code(404), 3), (StatusCodeSlot::Other, 2)]),
+        )]);
+        let measure = MeasureStatusCodes::Listed(vec![200, 404]);
+
+        let out = PrometheusFormatter::new().format_status_code_stats(&zones, &measure);
+        assert!(out.contains("# TYPE nginx_vts_status_code_requests_total counter\n"));
+        for line in [
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"200\"} 0\n",
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"404\"} 3\n",
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"other\"} 2\n",
+        ] {
+            assert!(out.contains(line), "missing {line:?} in:\n{out}");
+        }
+    }
+
+    #[test]
+    fn all_prints_only_the_codes_that_occurred() {
+        let zones = HashMap::from([(
+            "example.test".to_string(),
+            with_codes(&[(StatusCodeSlot::Code(418), 1)]),
+        )]);
+
+        let out =
+            PrometheusFormatter::new().format_status_code_stats(&zones, &MeasureStatusCodes::All);
+        assert!(out.contains("{host=\"example.test\",code=\"418\"} 1\n"));
+        assert!(out.contains("{host=\"example.test\",code=\"other\"} 0\n"));
+        assert_eq!(out.matches("host=\"example.test\"").count(), 2);
+    }
+
+    #[test]
+    fn the_star_row_sums_the_codes_of_every_zone() {
+        let zones = HashMap::from([
+            (
+                "a.test".to_string(),
+                with_codes(&[(StatusCodeSlot::Code(200), 2)]),
+            ),
+            (
+                "b.test".to_string(),
+                with_codes(&[
+                    (StatusCodeSlot::Code(200), 3),
+                    (StatusCodeSlot::Code(503), 1),
+                ]),
+            ),
+        ]);
+
+        let out =
+            PrometheusFormatter::new().format_status_code_stats(&zones, &MeasureStatusCodes::All);
+        assert!(out.contains("{host=\"*\",code=\"200\"} 5\n"));
+        assert!(out.contains("{host=\"*\",code=\"503\"} 1\n"));
+        assert!(out.contains("{host=\"*\",code=\"other\"} 0\n"));
+    }
+
+    #[test]
+    fn the_star_row_is_there_before_any_traffic_when_measured() {
+        let measure = MeasureStatusCodes::Listed(vec![500]);
+        let out = PrometheusFormatter::new().format_status_code_stats(&HashMap::new(), &measure);
+        assert!(out.contains("nginx_vts_status_code_requests_total{host=\"*\",code=\"500\"} 0\n"));
+        assert!(out.contains("nginx_vts_status_code_requests_total{host=\"*\",code=\"other\"} 0\n"));
+    }
+
+    #[test]
+    fn a_host_with_a_quote_is_escaped_in_the_status_code_rows() {
+        let zones = HashMap::from([("a\"b".to_string(), VtsServerStats::default())]);
+
+        let out =
+            PrometheusFormatter::new().format_status_code_stats(&zones, &MeasureStatusCodes::All);
+        assert!(out.contains("{host=\"a\\\"b\",code=\"other\"} 0\n"));
     }
 }

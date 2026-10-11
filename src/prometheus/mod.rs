@@ -4,7 +4,8 @@
 //!
 //!   - [`connections`] — `nginx_vts_main_connections`
 //!   - [`shm`]         — `nginx_vts_main_shm_usage_bytes`
-//!   - [`server`]      — `nginx_vts_server_*`
+//!   - [`server`]      — `nginx_vts_server_*` and
+//!     `nginx_vts_status_code_requests_total`
 //!   - [`upstream`]    — `nginx_vts_upstream_*` (counters + histogram)
 //!   - [`cache`]       — `nginx_vts_cache_*`
 //!
@@ -122,6 +123,7 @@ pub(super) fn format_le_bound(seconds: f64) -> String {
 /// information, connection statistics, and request metrics.
 pub fn generate_vts_status_content(
     peer_states: &std::collections::HashMap<(String, String), crate::peers::PeerState>,
+    measure_status_codes: &crate::status_codes::MeasureStatusCodes,
 ) -> String {
     // Collect current nginx connection statistics only in production
     #[cfg(not(test))]
@@ -176,6 +178,7 @@ pub fn generate_vts_status_content(
         content.push_str(&formatter.format_shm_info(&info));
     }
     content.push_str(&formatter.format_server_stats(&server_zone_stats));
+    content.push_str(&formatter.format_status_code_stats(&server_zone_stats, measure_status_codes));
     content.push_str(&formatter.format_upstream_stats(upstream_zones, peer_states));
 
     // Generate cache metrics — prefer the cross-worker shared table

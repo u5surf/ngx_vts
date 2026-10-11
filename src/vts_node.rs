@@ -8,6 +8,7 @@
 
 use crate::shm::ServerCounters;
 use crate::stats::{VtsConnectionStats, VtsServerStats};
+use crate::status_codes::StatusCodeSlot;
 use crate::upstream_stats::UpstreamZone;
 use std::collections::HashMap;
 
@@ -22,6 +23,10 @@ pub struct VtsStatsManager {
     /// Per server-zone counters keyed by `server_name`.
     pub stats: HashMap<String, ServerCounters>,
 
+    /// Per server-zone status code counts, filled only when
+    /// `vts_measure_status_codes` is set.
+    pub status_codes: HashMap<(String, StatusCodeSlot), u64>,
+
     /// Per-upstream zone statistics.
     pub upstream_zones: HashMap<String, UpstreamZone>,
 
@@ -34,6 +39,7 @@ impl VtsStatsManager {
     pub fn new() -> Self {
         Self {
             stats: HashMap::new(),
+            status_codes: HashMap::new(),
             upstream_zones: HashMap::new(),
             connections: VtsConnectionStats::default(),
         }
@@ -52,6 +58,14 @@ impl VtsStatsManager {
             .entry(server_name.to_string())
             .or_insert_with(ServerCounters::new)
             .update(status, bytes_in, bytes_out, request_time);
+    }
+
+    /// Count one request against a status code of a server zone.
+    pub fn update_status_code(&mut self, server_name: &str, slot: StatusCodeSlot) {
+        *self
+            .status_codes
+            .entry((server_name.to_string(), slot))
+            .or_insert(0) += 1;
     }
 
     // --- Upstream Zone Management ---
@@ -115,10 +129,17 @@ impl VtsStatsManager {
 
     /// Get all server statistics in format compatible with PrometheusFormatter
     pub fn get_all_server_stats(&self) -> HashMap<String, VtsServerStats> {
-        self.stats
+        let mut out: HashMap<String, VtsServerStats> = self
+            .stats
             .iter()
             .map(|(zone, counters)| (zone.clone(), (*counters).into_stats()))
-            .collect()
+            .collect();
+        for ((zone, slot), &count) in &self.status_codes {
+            if let Some(stats) = out.get_mut(zone) {
+                stats.status_codes.insert(*slot, count);
+            }
+        }
+        out
     }
 }
 

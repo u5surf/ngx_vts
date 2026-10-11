@@ -6,6 +6,9 @@
 //! formatter reads them.  Field shapes match what
 //! `nginx_vts_server_*` metrics need.
 
+use std::collections::BTreeMap;
+
+use crate::status_codes::StatusCodeSlot;
 use crate::upstream_stats::RESPONSE_TIME_BUCKET_COUNT;
 
 /// Per-status-class response counters.
@@ -58,6 +61,10 @@ pub struct VtsServerStats {
     /// `i` corresponds to
     /// `upstream_stats::RESPONSE_TIME_BUCKET_BOUNDS_MS[i]`.
     pub request_buckets: [u64; RESPONSE_TIME_BUCKET_COUNT],
+    /// Requests per status code for `nginx_vts_status_code_requests_total`.
+    /// Empty unless `vts_measure_status_codes` is set, and only holds the
+    /// codes that have been seen.
+    pub status_codes: BTreeMap<StatusCodeSlot, u64>,
 }
 
 /// Connection-state snapshot used by the Prometheus
