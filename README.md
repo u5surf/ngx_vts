@@ -357,6 +357,7 @@ Counters live only in shared memory; nothing is written to disk.
 |---|---|
 | `nginx -s reload` | Kept — nginx reuses the zone |
 | Reload after changing the `vts_zone` size | Reset to zero — a new zone is allocated |
+| Reload that changes `vts_measure_status_codes` | Per-code counters reset to zero, the rest kept — the old counts are classified by codes no longer measured |
 | Stop / start, container restart | Reset to zero |
 | Binary upgrade (`USR2`) | Reset to zero — the new master does not inherit the zone |
 

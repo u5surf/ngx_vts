@@ -100,11 +100,80 @@ impl MeasureStatusCodes {
             StatusCodeSlot::Other
         })
     }
+
+    /// Where a stored count belongs under this configuration.  A worker
+    /// that a reload has not replaced yet still counts by the old one, so a
+    /// code can turn up that this one does not measure; it goes to `other`,
+    /// as this configuration would have counted it.
+    pub fn reclassify(&self, slot: StatusCodeSlot) -> StatusCodeSlot {
+        match slot {
+            StatusCodeSlot::Code(code) => self.slot(code).unwrap_or(StatusCodeSlot::Other),
+            StatusCodeSlot::Other => StatusCodeSlot::Other,
+        }
+    }
+
+    /// Identifies the configuration, so that the shared zone, which a
+    /// reload keeps, can tell whether its counts were made under the
+    /// configuration that is now loaded.  FNV-1a, so it does not depend on
+    /// a hasher's seed.
+    pub fn fingerprint(&self) -> u64 {
+        let (tag, codes): (u8, &[u16]) = match self {
+            MeasureStatusCodes::Off => (0, &[]),
+            MeasureStatusCodes::All => (1, &[]),
+            MeasureStatusCodes::Listed(codes) => (2, codes),
+        };
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let bytes = std::iter::once(tag).chain(codes.iter().flat_map(|code| code.to_le_bytes()));
+        for byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reclassify_moves_codes_no_longer_measured_to_other() {
+        let listed = MeasureStatusCodes::Listed(vec![404]);
+        assert_eq!(
+            listed.reclassify(StatusCodeSlot::Code(404)),
+            StatusCodeSlot::Code(404)
+        );
+        assert_eq!(
+            listed.reclassify(StatusCodeSlot::Code(200)),
+            StatusCodeSlot::Other
+        );
+        assert_eq!(
+            listed.reclassify(StatusCodeSlot::Other),
+            StatusCodeSlot::Other
+        );
+        assert_eq!(
+            MeasureStatusCodes::All.reclassify(StatusCodeSlot::Code(200)),
+            StatusCodeSlot::Code(200)
+        );
+    }
+
+    #[test]
+    fn fingerprint_tells_configurations_apart() {
+        let configs = [
+            MeasureStatusCodes::Off,
+            MeasureStatusCodes::All,
+            MeasureStatusCodes::Listed(vec![]),
+            MeasureStatusCodes::Listed(vec![200]),
+            MeasureStatusCodes::Listed(vec![404]),
+            MeasureStatusCodes::Listed(vec![200, 404]),
+        ];
+        for (i, a) in configs.iter().enumerate() {
+            assert_eq!(a.fingerprint(), a.clone().fingerprint());
+            for b in &configs[i + 1..] {
+                assert_ne!(a.fingerprint(), b.fingerprint(), "{a:?} vs {b:?}");
+            }
+        }
+    }
 
     #[test]
     fn parse_all() {

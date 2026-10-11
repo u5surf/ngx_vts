@@ -336,36 +336,32 @@ pub extern "C" fn vts_collect_nginx_connections() {
     }
 }
 
-/// Record one request against its server zone.  Called from the
-/// LOG_PHASE handler for every main request.
+/// Record one request against its server zone, and against `slot` when
+/// `vts_measure_status_codes` is set.  Called from the LOG_PHASE handler
+/// for every main request.
 pub fn track_server_request(
     server_name: &str,
     status: u16,
     bytes_in: u64,
     bytes_out: u64,
     request_time: u64,
+    slot: Option<crate::status_codes::StatusCodeSlot>,
 ) {
     // Same dispatch as `track_upstream_request`: shared memory wins
     // when configured, otherwise the process-local manager is used.
-    if crate::shm::record_server(server_name, status, bytes_in, bytes_out, request_time) {
+    if crate::shm::record_server(server_name, status, bytes_in, bytes_out, request_time, slot) {
         return;
     }
 
-    update_server_zone_stats(server_name, status, bytes_in, bytes_out, request_time);
-}
-
-/// Count one request against a status code of its server zone.  Called
-/// from the LOG_PHASE handler when `vts_measure_status_codes` is set.
-pub fn track_status_code(server_name: &str, slot: crate::status_codes::StatusCodeSlot) {
-    if crate::shm::record_status_code(server_name, slot) {
-        return;
-    }
-
+    // One lock for both, as in shared memory.
     let mut manager = match VTS_MANAGER.write() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    manager.update_status_code(server_name, slot);
+    manager.update_server_stats(server_name, status, bytes_in, bytes_out, request_time);
+    if let Some(slot) = slot {
+        manager.update_status_code(server_name, slot);
+    }
 }
 
 /// Update VTS statistics from nginx (to be called periodically)

@@ -286,6 +286,10 @@ extern "C" fn vts_zone_directive(
     };
 
     shm_zone.init = Some(vts_init_shm_zone);
+    // For `vts_init_shm_zone`, which compares the status codes this cycle
+    // measures with those the zone's counts were made under.
+    shm_zone.data = Module::main_conf_mut(cf)
+        .map_or(ptr::null_mut(), |mcf| ptr::from_mut(mcf).cast::<c_void>());
 
     ngx::core::NGX_CONF_OK
 }

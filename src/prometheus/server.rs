@@ -114,7 +114,8 @@ impl PrometheusFormatter {
     /// every zone gets an `other` row and, for a list of codes, a row per
     /// listed code even while it reads zero. With `all` only the codes that
     /// occurred are printed, since the other few hundred would all be zero.
-    /// Nothing at all is printed when the directive is absent.
+    /// Nothing at all is printed when the directive is absent.  A count
+    /// for a code that is not measured any more is printed as `other`.
     pub fn format_status_code_stats(
         &self,
         server_stats: &HashMap<String, VtsServerStats>,
@@ -149,7 +150,9 @@ impl PrometheusFormatter {
                 .map(|&code| (StatusCodeSlot::Code(code), 0))
                 .chain(std::iter::once((StatusCodeSlot::Other, 0)))
                 .collect();
-            slots.extend(codes.iter().map(|(&slot, &count)| (slot, count)));
+            for (&slot, &count) in codes {
+                *slots.entry(measure.reclassify(slot)).or_insert(0) += count;
+            }
             for (slot, count) in slots {
                 output.push_str(&format!(
                     "{prefix}status_code_requests_total{{host=\"{host}\",code=\"{}\"}} {count}\n",
@@ -306,6 +309,31 @@ mod tests {
         VtsServerStats {
             status_codes: codes.iter().copied().collect(),
             ..VtsServerStats::default()
+        }
+    }
+
+    #[test]
+    fn a_code_no_longer_measured_is_printed_as_other() {
+        // 200 was counted by a worker still on a configuration that listed
+        // it; the one loaded now lists only 404.
+        let zones = HashMap::from([(
+            "example.test".to_string(),
+            with_codes(&[
+                (StatusCodeSlot::Code(200), 4),
+                (StatusCodeSlot::Code(404), 3),
+                (StatusCodeSlot::Other, 2),
+            ]),
+        )]);
+        let measure = MeasureStatusCodes::Listed(vec![404]);
+
+        let out = PrometheusFormatter::new().format_status_code_stats(&zones, &measure);
+        assert!(!out.contains("code=\"200\""), "200 printed in:\n{out}");
+        for line in [
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"404\"} 3\n",
+            "nginx_vts_status_code_requests_total{host=\"example.test\",code=\"other\"} 6\n",
+            "nginx_vts_status_code_requests_total{host=\"*\",code=\"other\"} 6\n",
+        ] {
+            assert!(out.contains(line), "missing {line:?} in:\n{out}");
         }
     }
 

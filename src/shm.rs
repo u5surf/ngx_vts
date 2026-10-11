@@ -30,6 +30,8 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::cache_stats::{CacheZoneStats, VtsCacheStats};
 use crate::stats::{VtsRequestTimes, VtsResponseStats, VtsServerStats};
+#[cfg(not(test))]
+use crate::status_codes::MeasureStatusCodes;
 use crate::status_codes::StatusCodeSlot;
 use crate::upstream_stats::{
     UpstreamServerStats, UpstreamZone, VtsResponseStats as UpstreamResp,
@@ -383,6 +385,10 @@ pub struct VtsShared {
     pub upstreams: RwLock<UpstreamMap<SlabPool>>,
     pub caches: RwLock<CacheMap<SlabPool>>,
     pub status_codes: RwLock<StatusCodeMap<SlabPool>>,
+    /// [`MeasureStatusCodes::fingerprint`] of the configuration
+    /// `status_codes` was counted under.  A reload that changes it empties
+    /// the map, since its counts are classified the old way.
+    pub status_codes_config: u64,
     /// When the counters started from zero, in seconds since the epoch.
     /// Set once when the zone is built, so it survives a reload that
     /// reuses the zone and moves forward whenever the counters reset.
@@ -486,12 +492,17 @@ fn shared() -> Option<&'static VtsShared> {
     }
 }
 
-/// Record one server-zone request into shared memory.  Returns `false`
-/// when no `vts_zone` is configured so the caller can fall back to a
-/// process-local store.  Oversized keys (> `VTS_MAX_KEY_BYTES`) and
-/// out-of-memory inserts are silently dropped while reporting `true`
-/// (the shared path *is* configured; we just don't have room for this
-/// specific key).
+/// Record one server-zone request into shared memory, and with `slot` its
+/// status code as well.  Returns `false` when no `vts_zone` is configured
+/// so the caller can fall back to a process-local store.  Oversized keys
+/// (> `VTS_MAX_KEY_BYTES`) and out-of-memory inserts are silently dropped
+/// while reporting `true` (the shared path *is* configured; we just don't
+/// have room for this specific key).
+///
+/// The status code is counted while the server entry is still locked, and
+/// [`snapshot_servers`] holds both locks too, so a scrape never sees a
+/// request in one map and not yet in the other.  The lock order, servers
+/// then status codes, is the same in both.
 #[cfg(not(test))]
 pub fn record_server(
     name: &str,
@@ -499,6 +510,7 @@ pub fn record_server(
     bytes_in: u64,
     bytes_out: u64,
     request_time: u64,
+    slot: Option<StatusCodeSlot>,
 ) -> bool {
     let Some(shared) = shared() else {
         return false;
@@ -512,17 +524,41 @@ pub fn record_server(
 
     if let Some(entry) = guard.get_mut(key_bytes) {
         entry.update(status, bytes_in, bytes_out, request_time);
-        return true;
+    } else {
+        let alloc = guard.allocator().clone();
+        let Ok(key) = NgxString::try_from_bytes_in(key_bytes, alloc) else {
+            return true;
+        };
+        let mut counters = ServerCounters::new();
+        counters.update(status, bytes_in, bytes_out, request_time);
+        if guard.try_insert(key, counters).is_err() {
+            return true;
+        }
+    }
+
+    if let Some(slot) = slot {
+        record_status_code(shared, name, slot);
+    }
+    true
+}
+
+/// Count one request against a status code of its server zone.  Called
+/// by [`record_server`] with the server entry locked.
+#[cfg(not(test))]
+fn record_status_code(shared: &VtsShared, name: &str, slot: StatusCodeSlot) {
+    let composite = upstream_key_bytes(name, &slot.label());
+    let mut guard = shared.status_codes.write();
+
+    if let Some(count) = guard.get_mut(composite.as_slice()) {
+        *count += 1;
+        return;
     }
 
     let alloc = guard.allocator().clone();
-    let Ok(key) = NgxString::try_from_bytes_in(key_bytes, alloc) else {
-        return true;
+    let Ok(key) = NgxString::try_from_bytes_in(&composite, alloc) else {
+        return;
     };
-    let mut counters = ServerCounters::new();
-    counters.update(status, bytes_in, bytes_out, request_time);
-    let _ = guard.try_insert(key, counters);
-    true
+    let _ = guard.try_insert(key, 1);
 }
 
 /// Test-only stub: pretends no `vts_zone` is configured so callers fall
@@ -535,40 +571,8 @@ pub fn record_server(
     _bytes_in: u64,
     _bytes_out: u64,
     _request_time: u64,
+    _slot: Option<StatusCodeSlot>,
 ) -> bool {
-    false
-}
-
-/// Count one request against a status code of its server zone.  See
-/// [`record_server`] for the return-value contract.
-#[cfg(not(test))]
-pub fn record_status_code(name: &str, slot: StatusCodeSlot) -> bool {
-    let Some(shared) = shared() else {
-        return false;
-    };
-    if name.is_empty() || name.len() > VTS_MAX_KEY_BYTES {
-        return true;
-    }
-
-    let composite = upstream_key_bytes(name, &slot.label());
-    let mut guard = shared.status_codes.write();
-
-    if let Some(count) = guard.get_mut(composite.as_slice()) {
-        *count += 1;
-        return true;
-    }
-
-    let alloc = guard.allocator().clone();
-    let Ok(key) = NgxString::try_from_bytes_in(&composite, alloc) else {
-        return true;
-    };
-    let _ = guard.try_insert(key, 1);
-    true
-}
-
-/// Test-only stub.  See [`record_server`].
-#[cfg(test)]
-pub fn record_status_code(_name: &str, _slot: StatusCodeSlot) -> bool {
     false
 }
 
@@ -769,12 +773,14 @@ where
 #[cfg(not(test))]
 pub fn snapshot_servers() -> Option<HashMap<String, VtsServerStats>> {
     let shared = shared()?;
-    let mut servers = {
-        let guard = shared.servers.read();
-        build_server_snapshot(guard.iter().map(|(k, v)| (k.as_bytes(), v)))
-    };
-    let guard = shared.status_codes.read();
-    merge_status_code_snapshot(&mut servers, guard.iter().map(|(k, v)| (k.as_bytes(), *v)));
+    // Both locks at once, in the order `record_server` takes them.
+    let servers_guard = shared.servers.read();
+    let codes_guard = shared.status_codes.read();
+    let mut servers = build_server_snapshot(servers_guard.iter().map(|(k, v)| (k.as_bytes(), v)));
+    merge_status_code_snapshot(
+        &mut servers,
+        codes_guard.iter().map(|(k, v)| (k.as_bytes(), *v)),
+    );
     Some(servers)
 }
 
@@ -822,14 +828,16 @@ pub fn snapshot_caches() -> Option<HashMap<String, CacheZoneStats>> {
 ///
 /// Called by nginx exactly once per cycle (in the master, before workers
 /// fork).  On reload the slab pool's `data` field still points at the
-/// previous cycle's `VtsShared`, so we just re-publish that pointer;
+/// previous cycle's `VtsShared`, so we re-publish that pointer, emptying
+/// the status code counters if `vts_measure_status_codes` changed;
 /// otherwise we allocate empty `RbTreeMap`s and a fresh `VtsShared`
 /// from the slab pool itself.
 ///
 /// # Safety
 ///
 /// Invoked by nginx via the function pointer stored in `shm_zone->init`.
-/// `shm_zone` is a valid pointer; `data` is either NULL on initial start
+/// `shm_zone` is a valid pointer whose `data` is this cycle's `MainConf`,
+/// as `vts_zone` set it; `data` is either NULL on initial start
 /// or a pointer carried over from the previous cycle (we re-discover the
 /// shared state from the slab pool either way, so we don't need it).
 #[cfg(not(test))]
@@ -848,14 +856,29 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         None => return NGX_ERROR as ngx_int_t,
     };
 
+    // `vts_zone` left this cycle's main configuration in `data`; it has
+    // been parsed in full by the time zones are initialized.
+    let config = shm_zone_ref
+        .data
+        .cast::<crate::module::MainConf>()
+        .as_ref()
+        .map_or(&MeasureStatusCodes::Off, |mcf| &mcf.measure_status_codes)
+        .fingerprint();
+
     // The slab pool's `data` field lives in the shared memory itself, so
     // it survives a reload as long as nginx reuses the zone (same name,
     // size and tag).  Non-null means a previous cycle already built the
-    // shared state — just re-publish the pointer.  A binary upgrade does
+    // shared state — re-publish the pointer.  A binary upgrade does
     // not get here: the zone is an anonymous mapping that the exec'd
     // master does not inherit, so counters start from zero.
     let existing = alloc.as_mut().data as *mut VtsShared;
     if !existing.is_null() {
+        // The counts were classified by the configuration they were made
+        // under; one that measures other codes starts them over.
+        if (*existing).status_codes_config != config {
+            (*existing).status_codes.write().clear();
+            (*existing).status_codes_config = config;
+        }
         shm_zone_ref.data = existing as *mut c_void;
         VTS_SHARED.store(existing, Ordering::Release);
         publish_zone(shm_zone_ref, &alloc);
@@ -885,6 +908,7 @@ pub unsafe extern "C" fn vts_init_shm_zone(
         upstreams: RwLock::new(upstreams),
         caches: RwLock::new(caches),
         status_codes: RwLock::new(status_codes),
+        status_codes_config: config,
         start_time: ngx_time() as u64,
     };
     let shared_ptr: *mut VtsShared = match allocate(shared, &alloc) {
@@ -1220,7 +1244,7 @@ mod tests {
         assert!(snapshot_servers().is_none());
         assert!(snapshot_upstreams().is_none());
         assert!(snapshot_caches().is_none());
-        assert!(!record_server("test", 200, 0, 0, 0));
+        assert!(!record_server("test", 200, 0, 0, 0, None));
         assert!(!record_upstream("u", "s", 0, 0, 0, 0, 200));
         assert!(!record_cache("zone", 7, 0, 0));
     }
